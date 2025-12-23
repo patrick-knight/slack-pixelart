@@ -54,7 +54,7 @@ chrome.storage.local.get(['slackEmojis'], (result) => {
 // Extract emojis from current tab
 extractEmojisBtn.addEventListener('click', async () => {
   extractEmojisBtn.disabled = true;
-  showStatus(emojiStatus, 'Extracting emojis... (this may take a few minutes for large emoji sets)', 'info');
+  showStatus(emojiStatus, 'Scrolling through emoji page to load all emojis...', 'info');
   
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -67,7 +67,7 @@ extractEmojisBtn.addEventListener('click', async () => {
     
     chrome.tabs.sendMessage(tab.id, { action: 'extractEmojis' }, (response) => {
       if (chrome.runtime.lastError) {
-        showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message, 'error');
+        showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message + '. Try reloading the Slack page.', 'error');
         extractEmojisBtn.disabled = false;
         return;
       }

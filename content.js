@@ -7,48 +7,112 @@
   const TRANSPARENCY_THRESHOLD = 128; // Alpha value threshold for considering pixels as opaque
   const PIXEL_SAMPLE_STEP = 16; // Sample every 4th pixel (4 RGBA values per pixel)
 
+  // Function to scroll and load all emojis
+  async function scrollToLoadAll() {
+    const scrollContainer = document.querySelector('.p-customize_emoji_wrapper__list') || 
+                           document.querySelector('[data-qa="customize_emoji_list"]') ||
+                           document.querySelector('.c-scrollbar__child') ||
+                           document.body;
+    
+    let lastScrollHeight = 0;
+    let currentScrollHeight = scrollContainer.scrollHeight;
+    let attempts = 0;
+    const maxAttempts = 50; // Prevent infinite loop
+    
+    while (lastScrollHeight !== currentScrollHeight && attempts < maxAttempts) {
+      lastScrollHeight = currentScrollHeight;
+      scrollContainer.scrollTo(0, scrollContainer.scrollHeight);
+      
+      // Wait for new content to load
+      await new Promise(resolve => setTimeout(resolve, 300));
+      currentScrollHeight = scrollContainer.scrollHeight;
+      attempts++;
+    }
+    
+    // Scroll back to top
+    scrollContainer.scrollTo(0, 0);
+  }
+
   // Function to extract emoji data from the page
   function extractEmojiData() {
     const emojis = [];
+    const seenNames = new Set(); // Avoid duplicates
     
-    // Slack's emoji customization page structure may vary, so we'll try multiple selectors
-    // Look for emoji images in the customization page
-    const emojiElements = document.querySelectorAll('[data-qa="customize_emoji_item"], .c-custom_emoji_item, .emoji-wrapper');
+    // Try multiple selector strategies for different Slack UI versions
+    const selectors = [
+      // Modern Slack
+      'div[data-qa="customize_emoji_item"]',
+      '.p-customize_emoji_wrapper__emoji_row',
+      '.c-custom_emoji_item',
+      // Fallback to any emoji images
+      'img[data-stringify-type="emoji"]',
+      'img[src*="/emoji/"]',
+      'img[src*="emoji.slack-edge.com"]'
+    ];
     
+    let emojiElements = [];
+    
+    // Try each selector until we find emojis
+    for (const selector of selectors) {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        emojiElements = Array.from(elements);
+        console.log(`Found ${elements.length} emojis using selector: ${selector}`);
+        break;
+      }
+    }
+    
+    // If still no emojis, try to find all images with emoji-like URLs
     if (emojiElements.length === 0) {
-      // Try alternative selectors for emoji images
-      const allImages = document.querySelectorAll('img[src*="emoji"], img[data-stringify-type="emoji"]');
+      emojiElements = Array.from(document.querySelectorAll('img')).filter(img => 
+        img.src && (
+          img.src.includes('/emoji/') || 
+          img.src.includes('emoji.slack-edge.com') ||
+          img.src.includes('slack.com/customize')
+        )
+      );
+      console.log(`Found ${emojiElements.length} emoji images via fallback`);
+    }
+    
+    emojiElements.forEach((element) => {
+      let img, name;
       
-      allImages.forEach((img) => {
-        const name = img.alt || img.getAttribute('data-emoji-name') || img.getAttribute('aria-label') || '';
-        const url = img.src;
+      // Check if element is an image or contains an image
+      if (element.tagName === 'IMG') {
+        img = element;
+        // Try to find name from nearby elements
+        const parent = img.closest('[data-qa="customize_emoji_item"]') || 
+                      img.closest('.p-customize_emoji_wrapper__emoji_row') ||
+                      img.closest('.c-custom_emoji_item');
         
-        if (url && name) {
+        if (parent) {
+          const nameElement = parent.querySelector('[data-qa="customize_emoji_name"]') ||
+                             parent.querySelector('.c-emoji__name') ||
+                             parent.querySelector('.emoji_name');
+          name = nameElement ? nameElement.textContent.trim() : img.alt;
+        } else {
+          name = img.alt || img.getAttribute('aria-label') || img.getAttribute('data-emoji-name') || '';
+        }
+      } else {
+        img = element.querySelector('img');
+        const nameElement = element.querySelector('[data-qa="customize_emoji_name"]') ||
+                           element.querySelector('.c-emoji__name') ||
+                           element.querySelector('.emoji_name') ||
+                           element.querySelector('[class*="name"]');
+        name = nameElement ? nameElement.textContent.trim() : (img ? img.alt : '');
+      }
+      
+      if (img && img.src && name) {
+        const cleanName = name.replace(/:/g, '').trim();
+        if (cleanName && !seenNames.has(cleanName)) {
+          seenNames.add(cleanName);
           emojis.push({
-            name: name.replace(/:/g, ''),
-            url: url
+            name: cleanName,
+            url: img.src
           });
         }
-      });
-    } else {
-      // Process emoji elements
-      emojiElements.forEach((element) => {
-        const img = element.querySelector('img');
-        const nameElement = element.querySelector('[data-qa="customize_emoji_name"], .emoji_name, .c-custom_emoji_item__name');
-        
-        if (img) {
-          const name = nameElement ? nameElement.textContent.trim() : (img.alt || '');
-          const url = img.src;
-          
-          if (url && name) {
-            emojis.push({
-              name: name.replace(/:/g, ''),
-              url: url
-            });
-          }
-        }
-      });
-    }
+      }
+    });
     
     return emojis;
   }
@@ -136,49 +200,37 @@
   // Listen for messages from the popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'extractEmojis') {
-      const emojis = extractEmojiData();
-      
-      // Get colors for each emoji in batches
-      processEmojisInBatches(emojis, 100, (currentBatch, totalBatches, processedCount) => {
-        // Send progress updates
-        console.log(`Processing batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
-      })
-      .then(emojisWithColors => {
-        chrome.storage.local.set({ 
-          slackEmojis: emojisWithColors,
-          extractedAt: Date.now()
-        }, () => {
-          sendResponse({ 
-            success: true, 
-            count: emojisWithColors.length,
-            emojis: emojisWithColors
+      // First scroll to load all emojis
+      scrollToLoadAll()
+        .then(() => {
+          const emojis = extractEmojiData();
+          
+          // Get colors for each emoji in batches
+          return processEmojisInBatches(emojis, 100, (currentBatch, totalBatches, processedCount) => {
+            // Send progress updates
+            console.log(`Processing batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
           });
+        })
+        .then(emojisWithColors => {
+          chrome.storage.local.set({ 
+            slackEmojis: emojisWithColors,
+            extractedAt: Date.now()
+          }, () => {
+            sendResponse({ 
+              success: true, 
+              count: emojisWithColors.length,
+              emojis: emojisWithColors
+            });
+          });
+        })
+        .catch(error => {
+          sendResponse({ success: false, error: error.message });
         });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
-      });
       
       return true; // Keep the message channel open for async response
     }
   });
 
-  // Auto-extract emojis when the page loads
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(() => {
-        const emojis = extractEmojiData();
-        if (emojis.length > 0) {
-          console.log(`Slack Pixel Art: Found ${emojis.length} emojis on this page`);
-        }
-      }, 1000);
-    });
-  } else {
-    setTimeout(() => {
-      const emojis = extractEmojiData();
-      if (emojis.length > 0) {
-        console.log(`Slack Pixel Art: Found ${emojis.length} emojis on this page`);
-      }
-    }, 1000);
-  }
+  // Log extension loaded
+  console.log('Slack Pixel Art extension loaded on emoji customization page');
 })();
