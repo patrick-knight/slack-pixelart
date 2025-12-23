@@ -61,8 +61,9 @@ Here's a complete example workflow:
 
 1. **Extract Emojis**
    - Go to `https://yourworkspace.slack.com/customize/emoji`
-   - Click "Extract Emojis"
+   - Click "Extract Emojis" (or "Update Cache" if previously extracted)
    - Wait for extraction to complete
+   - Use "Resync" button if you need to force a full re-extraction
 
 2. **Find or Create Source Image**
    - Use a simple smiley face image

@@ -40,9 +40,9 @@ See the [Installation Guide](INSTALL.md) for detailed instructions.
 
 1. Navigate to your Slack workspace's emoji customization page: `https://[your-workspace].slack.com/customize/emoji`
 2. Click the Slack Pixel Art extension icon in your Chrome toolbar
-3. Click the "Extract Emojis" button
+3. Click the "Extract Emojis" button (or "Update Cache" if emojis were previously extracted)
 4. The extension will extract all available emojis and analyze their colors
-5. Extracted emojis are cached for reuse - use "Resync" to update if new emojis are added
+5. Extracted emojis are cached for reuse - a "Resync" button appears to force re-extraction if needed
 
 ### Step 2: Load an Image
 
