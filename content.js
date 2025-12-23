@@ -64,13 +64,19 @@
     
     // If still no emojis, try to find all images with emoji-like URLs
     if (emojiElements.length === 0) {
-      emojiElements = Array.from(document.querySelectorAll('img')).filter(img => 
-        img.src && (
-          img.src.includes('/emoji/') || 
-          img.src.includes('emoji.slack-edge.com') ||
-          img.src.includes('slack.com/customize')
-        )
-      );
+      emojiElements = Array.from(document.querySelectorAll('img')).filter(img => {
+        if (!img.src) return false;
+        try {
+          const url = new URL(img.src);
+          return (
+            url.hostname.endsWith('.slack-edge.com') ||
+            url.hostname.endsWith('.slack.com') ||
+            url.pathname.includes('/emoji/')
+          );
+        } catch {
+          return false;
+        }
+      });
       console.log(`Found ${emojiElements.length} emoji images via fallback`);
     }
     
