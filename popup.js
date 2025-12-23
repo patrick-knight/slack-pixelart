@@ -55,7 +55,18 @@ extractEmojisBtn.addEventListener('click', async () => {
       return;
     }
     
+    // Set up a listener for progress updates from content script
+    const progressListener = (message) => {
+      if (message.type === 'extractionProgress') {
+        showStatus(emojiStatus, `Processing emojis: ${message.processed} / ${message.total}...`, 'info');
+      }
+    };
+    chrome.runtime.onMessage.addListener(progressListener);
+    
     chrome.tabs.sendMessage(tab.id, { action: 'extractEmojis' }, (response) => {
+      // Remove the progress listener
+      chrome.runtime.onMessage.removeListener(progressListener);
+      
       if (chrome.runtime.lastError) {
         showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message, 'error');
         extractEmojisBtn.disabled = false;
@@ -64,7 +75,10 @@ extractEmojisBtn.addEventListener('click', async () => {
       
       if (response.success) {
         currentEmojis = response.emojis;
-        showStatus(emojiStatus, `Successfully extracted ${response.count} emojis!`, 'success');
+        const message = response.count > 10000 
+          ? `Successfully extracted ${response.count} emojis! (Large emoji set - conversion may take a few seconds)`
+          : `Successfully extracted ${response.count} emojis!`;
+        showStatus(emojiStatus, message, 'success');
         checkReadyToGenerate();
       } else {
         showStatus(emojiStatus, 'Error: ' + response.error, 'error');

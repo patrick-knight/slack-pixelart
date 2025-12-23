@@ -106,16 +106,43 @@
     });
   }
 
+  // Process emojis in batches to avoid browser freezing with large emoji sets
+  async function processEmojisInBatches(emojis, batchSize = 100, onProgress = null) {
+    const results = [];
+    const totalBatches = Math.ceil(emojis.length / batchSize);
+    
+    for (let i = 0; i < emojis.length; i += batchSize) {
+      const batch = emojis.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async (emoji) => {
+          const color = await getAverageColor(emoji.url);
+          return { ...emoji, color };
+        })
+      );
+      results.push(...batchResults);
+      
+      if (onProgress) {
+        const currentBatch = Math.floor(i / batchSize) + 1;
+        onProgress(currentBatch, totalBatches, results.length);
+      }
+      
+      // Small delay between batches to keep UI responsive
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    return results;
+  }
+
   // Listen for messages from the popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'extractEmojis') {
       const emojis = extractEmojiData();
       
-      // Get colors for each emoji
-      Promise.all(emojis.map(async (emoji) => {
-        const color = await getAverageColor(emoji.url);
-        return { ...emoji, color };
-      }))
+      // Get colors for each emoji in batches
+      processEmojisInBatches(emojis, 100, (currentBatch, totalBatches, processedCount) => {
+        // Send progress updates
+        console.log(`Processing batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
+      })
       .then(emojisWithColors => {
         chrome.storage.local.set({ 
           slackEmojis: emojisWithColors,

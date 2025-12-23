@@ -17,6 +17,64 @@ class PixelArtConverter {
       ...options
     };
     this.usedEmojis = new Map(); // Track emoji usage
+    
+    // Performance optimization: Build a spatial index for faster color matching
+    // For large emoji sets (>1000), this dramatically improves performance
+    this.colorIndex = this.buildColorIndex();
+  }
+
+  // Build a color index for faster lookup with large emoji sets
+  buildColorIndex() {
+    if (this.emojis.length < 1000) {
+      return null; // Not worth the overhead for small sets
+    }
+    
+    // Bucket emojis by quantized color (reduce color space to 32×32×32)
+    const bucketSize = 8; // 256/8 = 32 buckets per channel
+    const index = new Map();
+    
+    for (const emoji of this.emojis) {
+      const bucketR = Math.floor(emoji.color.r / bucketSize);
+      const bucketG = Math.floor(emoji.color.g / bucketSize);
+      const bucketB = Math.floor(emoji.color.b / bucketSize);
+      const key = `${bucketR},${bucketG},${bucketB}`;
+      
+      if (!index.has(key)) {
+        index.set(key, []);
+      }
+      index.get(key).push(emoji);
+    }
+    
+    return { index, bucketSize };
+  }
+
+  // Get candidate emojis from nearby color buckets
+  getCandidateEmojis(targetColor) {
+    if (!this.colorIndex) {
+      return this.emojis; // Return all emojis for small sets
+    }
+    
+    const { index, bucketSize } = this.colorIndex;
+    const bucketR = Math.floor(targetColor.r / bucketSize);
+    const bucketG = Math.floor(targetColor.g / bucketSize);
+    const bucketB = Math.floor(targetColor.b / bucketSize);
+    
+    const candidates = [];
+    
+    // Search in current bucket and adjacent buckets (27 buckets total)
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dg = -1; dg <= 1; dg++) {
+        for (let db = -1; db <= 1; db++) {
+          const key = `${bucketR + dr},${bucketG + dg},${bucketB + db}`;
+          if (index.has(key)) {
+            candidates.push(...index.get(key));
+          }
+        }
+      }
+    }
+    
+    // If no candidates found, fall back to all emojis
+    return candidates.length > 0 ? candidates : this.emojis;
   }
 
   // Calculate color difference using Euclidean distance
@@ -32,7 +90,10 @@ class PixelArtConverter {
     let bestEmoji = null;
     let bestDistance = Infinity;
 
-    for (const emoji of this.emojis) {
+    // Use spatial index to reduce search space for large emoji sets
+    const candidates = this.getCandidateEmojis(targetColor);
+
+    for (const emoji of candidates) {
       const distance = this.colorDistance(targetColor, emoji.color);
       
       if (distance < bestDistance) {
@@ -43,6 +104,11 @@ class PixelArtConverter {
         if (usageCount < maxUsage || this.options.tolerance >= 50) {
           bestDistance = distance;
           bestEmoji = emoji;
+          
+          // Early exit optimization: if we found a very close match, stop searching
+          if (distance < 5) { // RGB distance < 5 is essentially identical
+            break;
+          }
         }
       }
     }

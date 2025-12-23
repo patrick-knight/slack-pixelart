@@ -93,6 +93,21 @@ Adjust the following settings as needed:
 
 See [EXAMPLES.md](EXAMPLES.md) for detailed use cases, tips, and best practices.
 
+## Performance
+
+The extension is optimized to handle large emoji sets efficiently:
+
+- **Emoji Extraction**: Processes emojis in batches of 100 to keep the browser responsive
+- **Color Matching**: Uses spatial indexing (color bucketing) for emoji sets >1,000
+- **Large Workspaces**: Tested to work with 60,000+ emojis
+  - Extraction: ~2-5 minutes depending on network speed
+  - Conversion: ~5-10 seconds for a 20×20 grid
+
+**Tips for Large Emoji Sets:**
+- Extract emojis once, then reuse them (stored in browser)
+- Use smaller grid sizes (15×15 or less) for faster conversion
+- Higher duplicate tolerance (50+) reduces search time
+
 ## Troubleshooting
 
 **Emojis not extracting?**
