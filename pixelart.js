@@ -45,7 +45,7 @@ class PixelArtConverter {
       index.get(key).push(emoji);
     }
     
-    return { index, bucketSize };
+    return { colorIndex: index, bucketSize };
   }
 
   // Get candidate emojis from nearby color buckets
@@ -54,7 +54,7 @@ class PixelArtConverter {
       return this.emojis; // Return all emojis for small sets
     }
     
-    const { index, bucketSize } = this.colorIndex;
+    const { colorIndex, bucketSize } = this.colorIndex;
     const bucketR = Math.floor(targetColor.r / bucketSize);
     const bucketG = Math.floor(targetColor.g / bucketSize);
     const bucketB = Math.floor(targetColor.b / bucketSize);
@@ -66,8 +66,8 @@ class PixelArtConverter {
       for (let dg = -1; dg <= 1; dg++) {
         for (let db = -1; db <= 1; db++) {
           const key = `${bucketR + dr},${bucketG + dg},${bucketB + db}`;
-          if (index.has(key)) {
-            candidates.push(...index.get(key));
+          if (colorIndex.has(key)) {
+            candidates.push(...colorIndex.get(key));
           }
         }
       }

@@ -44,7 +44,7 @@ chrome.storage.local.get(['slackEmojis'], (result) => {
 // Extract emojis from current tab
 extractEmojisBtn.addEventListener('click', async () => {
   extractEmojisBtn.disabled = true;
-  showStatus(emojiStatus, 'Extracting emojis...', 'info');
+  showStatus(emojiStatus, 'Extracting emojis... (this may take a few minutes for large emoji sets)', 'info');
   
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -55,18 +55,7 @@ extractEmojisBtn.addEventListener('click', async () => {
       return;
     }
     
-    // Set up a listener for progress updates from content script
-    const progressListener = (message) => {
-      if (message.type === 'extractionProgress') {
-        showStatus(emojiStatus, `Processing emojis: ${message.processed} / ${message.total}...`, 'info');
-      }
-    };
-    chrome.runtime.onMessage.addListener(progressListener);
-    
     chrome.tabs.sendMessage(tab.id, { action: 'extractEmojis' }, (response) => {
-      // Remove the progress listener
-      chrome.runtime.onMessage.removeListener(progressListener);
-      
       if (chrome.runtime.lastError) {
         showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message, 'error');
         extractEmojisBtn.disabled = false;
