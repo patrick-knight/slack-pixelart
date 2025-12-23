@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slack Pixel Art</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <rect x="4" y="4" width="6" height="6" fill="currentColor" opacity="0.8"/>
+          <rect x="14" y="4" width="6" height="6" fill="currentColor"/>
+          <rect x="4" y="14" width="6" height="6" fill="currentColor"/>
+          <rect x="14" y="14" width="6" height="6" fill="currentColor" opacity="0.6"/>
+        </svg>
+      </div>
+      <h1>Slack Pixel Art</h1>
+    </div>
+  </div>
+  
+  <div class="container">
+    <div class="card">
+      <div class="card-header">
+        <span class="step-badge">1</span>
+        <h2>Extract Emojis</h2>
+      </div>
+      <div class="card-body">
+        <p class="help-text">Navigate to your workspace's emoji page and extract available emojis</p>
+        <button id="extractEmojis" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Extract Emojis
+        </button>
+        <div id="emojiStatus" class="status"></div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="step-badge">2</span>
+        <h2>Load Image</h2>
+      </div>
+      <div class="card-body">
+        <div class="input-group">
+          <label for="imageUrl">Image URL</label>
+          <div class="input-with-button">
+            <input type="text" id="imageUrl" placeholder="https://example.com/image.png">
+            <button id="loadFromUrl" class="btn btn-secondary">Load</button>
+          </div>
+        </div>
+        <div class="divider">
+          <span>or</span>
+        </div>
+        <div class="input-group">
+          <label for="imageFile">Upload File</label>
+          <div class="file-input-wrapper">
+            <input type="file" id="imageFile" accept="image/*">
+            <span class="file-input-label">Choose an image file</span>
+          </div>
+        </div>
+        <div id="imageStatus" class="status"></div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="step-badge">3</span>
+        <h2>Configure</h2>
+      </div>
+      <div class="card-body">
+        <div class="config-grid">
+          <div class="input-group">
+            <label for="width">
+              Width
+              <span class="label-hint">(emojis)</span>
+            </label>
+            <input type="number" id="width" value="20" min="5" max="100">
+          </div>
+          <div class="input-group">
+            <label for="height">
+              Height
+              <span class="label-hint">(emojis)</span>
+            </label>
+            <input type="number" id="height" value="20" min="5" max="100">
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="charBudget">
+            Character Budget
+            <span class="label-hint">(0 = unlimited)</span>
+          </label>
+          <input type="number" id="charBudget" value="4000" min="0" max="40000">
+        </div>
+        <div class="input-group">
+          <label for="tolerance">
+            Duplicate Tolerance
+            <span class="label-hint">(0-100)</span>
+          </label>
+          <input type="range" id="toleranceRange" min="0" max="100" value="10">
+          <div class="range-value">
+            <input type="number" id="tolerance" value="10" min="0" max="100">
+          </div>
+          <small>Lower values require more unique emojis</small>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="step-badge">4</span>
+        <h2>Generate</h2>
+      </div>
+      <div class="card-body">
+        <button id="generate" class="btn btn-primary btn-large" disabled>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="Generate icon">
+            <path d="M8 2L2 8l6 6 6-6-6-6z" fill="currentColor"/>
+          </svg>
+          Generate Pixel Art
+        </button>
+        <div id="generateStatus" class="status"></div>
+        <div id="progress" class="progress-bar" style="display: none;">
+          <div id="progressBar" class="progress-fill"></div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card" id="previewSection" style="display: none;">
+      <div class="card-header">
+        <span class="step-badge">✓</span>
+        <h2>Preview</h2>
+      </div>
+      <div class="card-body">
+        <div id="preview" class="preview"></div>
+        <div class="stats-card">
+          <div id="stats" class="stats"></div>
+        </div>
+        <div class="action-buttons">
+          <button id="copyToClipboard" class="btn btn-success">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="Copy icon">
+              <rect x="4" y="4" width="8" height="10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M6 4V3a1 1 0 011-1h6a1 1 0 011 1v8a1 1 0 01-1 1h-1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+            Copy to Clipboard
+          </button>
+          <button id="downloadText" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="Download icon">
+              <path d="M8 2v8m0 0l3-3m-3 3L5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            Download
+          </button>
+        </div>
+        <div id="copyStatus" class="status"></div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="pixelart.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
