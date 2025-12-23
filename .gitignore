@@ -2,6 +2,7 @@
 *.tmp
 *.log
 create_icons.html
+test.html
 
 # OS files
 .DS_Store

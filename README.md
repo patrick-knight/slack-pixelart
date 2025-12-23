@@ -14,13 +14,23 @@ Turn Slack emojis into pixel art! This Chrome extension reads emojis from your S
 
 ## Installation
 
-### From Source
+See the [Installation Guide](INSTALL.md) for detailed instructions.
+
+### Quick Install
 
 1. Clone or download this repository
 2. Open Chrome and navigate to `chrome://extensions/`
 3. Enable "Developer mode" in the top right corner
 4. Click "Load unpacked" and select the directory containing this extension
 5. The Slack Pixel Art extension icon should appear in your Chrome toolbar
+
+## Screenshots
+
+### Extension Popup UI
+![Popup UI](https://github.com/user-attachments/assets/234376fc-307b-48a1-9e3f-d85bf4475a63)
+
+### Test Results
+![Test Results](https://github.com/user-attachments/assets/0a41d7d5-fb35-4136-b41a-f8d32666c491)
 
 ## Usage
 
@@ -80,6 +90,8 @@ Adjust the following settings as needed:
 - Higher duplicate tolerance allows for smoother gradients but less variety
 - Smaller dimensions (10×10 to 30×30) work best for most Slack messages
 - Remember that Slack has a 40,000 character limit per message
+
+See [EXAMPLES.md](EXAMPLES.md) for detailed use cases, tips, and best practices.
 
 ## Troubleshooting
 
