@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slack Pixel Art</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Slack Pixel Art</h1>
+    
+    <div class="section">
+      <h2>1. Extract Emojis</h2>
+      <p class="instructions">Go to <code>https://[your-workspace].slack.com/customize/emoji</code> and click the button below.</p>
+      <button id="extractEmojis" class="btn btn-primary">Extract Emojis from Current Tab</button>
+      <div id="emojiStatus" class="status"></div>
+    </div>
+    
+    <div class="section">
+      <h2>2. Load Image</h2>
+      <div class="input-group">
+        <label for="imageUrl">Image URL:</label>
+        <input type="text" id="imageUrl" placeholder="https://example.com/image.png">
+        <button id="loadFromUrl" class="btn">Load from URL</button>
+      </div>
+      <div class="input-group">
+        <label for="imageFile">Or upload file:</label>
+        <input type="file" id="imageFile" accept="image/*">
+      </div>
+      <div id="imageStatus" class="status"></div>
+    </div>
+    
+    <div class="section">
+      <h2>3. Configure</h2>
+      <div class="input-group">
+        <label for="width">Width (emojis):</label>
+        <input type="number" id="width" value="20" min="5" max="100">
+      </div>
+      <div class="input-group">
+        <label for="height">Height (emojis):</label>
+        <input type="number" id="height" value="20" min="5" max="100">
+      </div>
+      <div class="input-group">
+        <label for="charBudget">Character Budget (0 = unlimited):</label>
+        <input type="number" id="charBudget" value="4000" min="0" max="40000">
+      </div>
+      <div class="input-group">
+        <label for="tolerance">Duplicate Tolerance (0-100):</label>
+        <input type="number" id="tolerance" value="10" min="0" max="100">
+        <small>Lower = more unique emojis required</small>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2>4. Generate</h2>
+      <button id="generate" class="btn btn-primary" disabled>Generate Pixel Art</button>
+      <div id="generateStatus" class="status"></div>
+      <div id="progress" class="progress-bar" style="display: none;">
+        <div id="progressBar" class="progress-fill"></div>
+      </div>
+    </div>
+    
+    <div class="section" id="previewSection" style="display: none;">
+      <h2>5. Preview</h2>
+      <div id="preview" class="preview"></div>
+      <div class="input-group">
+        <label>Stats:</label>
+        <div id="stats" class="stats"></div>
+      </div>
+      <button id="copyToClipboard" class="btn btn-success">Copy to Clipboard</button>
+      <button id="downloadText" class="btn">Download as Text</button>
+      <div id="copyStatus" class="status"></div>
+    </div>
+  </div>
+  
+  <script src="pixelart.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
