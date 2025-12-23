@@ -33,6 +33,11 @@ const heightInput = document.getElementById('height');
 const charBudgetInput = document.getElementById('charBudget');
 const toleranceInput = document.getElementById('tolerance');
 const toleranceRange = document.getElementById('toleranceRange');
+const ditheringCheckbox = document.getElementById('dithering');
+const ditherStrengthInput = document.getElementById('ditherStrength');
+const ditherStrengthRange = document.getElementById('ditherStrengthRange');
+const texturePenaltyInput = document.getElementById('texturePenalty');
+const texturePenaltyRange = document.getElementById('texturePenaltyRange');
 const generateBtn = document.getElementById('generate');
 const generateStatus = document.getElementById('generateStatus');
 const progressBar = document.getElementById('progress');
@@ -123,6 +128,97 @@ function hideExtractionProgress() {
   extractProgress.style.display = 'none';
 }
 
+// Preview tab switching
+visualTabBtn.addEventListener('click', () => {
+  visualTabBtn.classList.add('active');
+  textTabBtn.classList.remove('active');
+  visualPreview.style.display = 'flex';
+  preview.style.display = 'none';
+});
+
+textTabBtn.addEventListener('click', () => {
+  textTabBtn.classList.add('active');
+  visualTabBtn.classList.remove('active');
+  preview.style.display = 'block';
+  visualPreview.style.display = 'none';
+});
+
+// Render visual preview with emoji images
+function renderVisualPreview(grid, emojiSize = 16) {
+  visualPreview.innerHTML = '';
+  
+  // Add zoom controls
+  const zoomControls = document.createElement('div');
+  zoomControls.className = 'zoom-controls';
+  zoomControls.innerHTML = `
+    <label>Zoom:</label>
+    <input type="range" id="zoomSlider" min="8" max="32" value="${emojiSize}">
+    <span class="zoom-value" id="zoomValue">${emojiSize}px</span>
+  `;
+  visualPreview.appendChild(zoomControls);
+  
+  // Container for the emoji grid
+  const gridContainer = document.createElement('div');
+  gridContainer.id = 'emojiGridContainer';
+  
+  // Build emoji lookup from current emojis
+  const emojiLookup = new Map();
+  for (const emoji of currentEmojis) {
+    emojiLookup.set(emoji.name, emoji.url);
+  }
+  
+  // Render each row
+  for (const row of grid) {
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'emoji-row';
+    
+    for (const emoji of row) {
+      const cell = document.createElement('div');
+      cell.className = 'emoji-cell';
+      cell.style.width = `${emojiSize}px`;
+      cell.style.height = `${emojiSize}px`;
+      
+      if (emoji && emoji.url) {
+        const img = document.createElement('img');
+        img.src = emoji.url;
+        img.alt = emoji.name;
+        img.title = `:${emoji.name}:`;
+        img.style.width = `${emojiSize}px`;
+        img.style.height = `${emojiSize}px`;
+        img.loading = 'lazy'; // Lazy load for performance
+        cell.appendChild(img);
+      }
+      
+      rowDiv.appendChild(cell);
+    }
+    
+    gridContainer.appendChild(rowDiv);
+  }
+  
+  visualPreview.appendChild(gridContainer);
+  
+  // Add zoom slider functionality
+  const zoomSlider = document.getElementById('zoomSlider');
+  const zoomValue = document.getElementById('zoomValue');
+  
+  zoomSlider.addEventListener('input', (e) => {
+    const newSize = parseInt(e.target.value);
+    zoomValue.textContent = `${newSize}px`;
+    
+    // Update all emoji cells and images
+    const cells = gridContainer.querySelectorAll('.emoji-cell');
+    cells.forEach(cell => {
+      cell.style.width = `${newSize}px`;
+      cell.style.height = `${newSize}px`;
+      const img = cell.querySelector('img');
+      if (img) {
+        img.style.width = `${newSize}px`;
+        img.style.height = `${newSize}px`;
+      }
+    });
+  });
+}
+
 // Sync range slider with number input
 toleranceRange.addEventListener('input', (e) => {
   toleranceInput.value = e.target.value;
@@ -132,8 +228,24 @@ toleranceInput.addEventListener('input', (e) => {
   toleranceRange.value = e.target.value;
 });
 
+ditherStrengthRange.addEventListener('input', (e) => {
+  ditherStrengthInput.value = e.target.value;
+});
+
+ditherStrengthInput.addEventListener('input', (e) => {
+  ditherStrengthRange.value = e.target.value;
+});
+
+texturePenaltyRange.addEventListener('input', (e) => {
+  texturePenaltyInput.value = e.target.value;
+});
+
+texturePenaltyInput.addEventListener('input', (e) => {
+  texturePenaltyRange.value = e.target.value;
+});
+
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty'], (result) => {
   if (result.slackEmojis && result.slackEmojis.length > 0) {
     currentEmojis = result.slackEmojis;
     cachedEmojiCount = result.slackEmojis.length;
@@ -147,11 +259,38 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync'], (result) =>
   if (result.autoSync !== undefined) {
     autoSyncCheckbox.checked = result.autoSync;
   }
+
+  // Load dithering preference
+  if (result.dithering !== undefined) {
+    ditheringCheckbox.checked = result.dithering;
+  }
+
+  if (result.ditherStrength !== undefined) {
+    ditherStrengthInput.value = result.ditherStrength;
+    ditherStrengthRange.value = result.ditherStrength;
+  }
+
+  if (result.texturePenalty !== undefined) {
+    texturePenaltyInput.value = result.texturePenalty;
+    texturePenaltyRange.value = result.texturePenalty;
+  }
 });
 
 // Save auto-sync preference when changed
 autoSyncCheckbox.addEventListener('change', () => {
   chrome.storage.local.set({ autoSync: autoSyncCheckbox.checked });
+});
+
+ditheringCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ dithering: ditheringCheckbox.checked });
+});
+
+ditherStrengthInput.addEventListener('change', () => {
+  chrome.storage.local.set({ ditherStrength: parseInt(ditherStrengthInput.value) });
+});
+
+texturePenaltyInput.addEventListener('change', () => {
+  chrome.storage.local.set({ texturePenalty: parseInt(texturePenaltyInput.value) });
 });
 
 // Extract emojis from current tab
@@ -191,10 +330,18 @@ async function startExtraction(forceResync) {
         currentEmojis = response.emojis;
         cachedEmojiCount = response.count;
         const methodNote = response.method === 'api' ? ' (via Slack API)' : ' (via page scan)';
+        const fallbackColors = Array.isArray(response.emojis)
+          ? response.emojis.reduce((acc, e) => acc + (e && e.colorError ? 1 : 0), 0)
+          : 0;
+
+        const fallbackNote = fallbackColors > 0
+          ? ` (${fallbackColors.toLocaleString()} fallback colors)`
+          : '';
+
         const message = response.count > 10000 
           ? `Successfully extracted ${response.count.toLocaleString()} emojis${methodNote}!`
           : `Successfully extracted ${response.count.toLocaleString()} emojis${methodNote}!`;
-        showStatus(emojiStatus, message, 'success');
+        showStatus(emojiStatus, message + fallbackNote, fallbackColors > 0 ? 'info' : 'success');
         updateCacheDisplay(currentEmojis);
         updateCacheDateDisplay(Date.now());
         checkReadyToGenerate();
@@ -286,7 +433,10 @@ generateBtn.addEventListener('click', async () => {
       width: parseInt(widthInput.value),
       height: parseInt(heightInput.value),
       charBudget: parseInt(charBudgetInput.value),
-      tolerance: parseInt(toleranceInput.value)
+      tolerance: parseInt(toleranceInput.value),
+      dithering: ditheringCheckbox.checked,
+      ditheringStrength: parseInt(ditherStrengthInput.value),
+      texturePenalty: parseInt(texturePenaltyInput.value)
     };
     
     const converter = new PixelArtConverter(currentEmojis, options);
@@ -365,7 +515,19 @@ function checkReadyToGenerate() {
 }
 
 function displayResult(result) {
-  // Display preview (truncated if too long)
+  // Store the grid for visual preview
+  currentGrid = result.grid;
+  
+  // Render visual preview (emoji images)
+  renderVisualPreview(result.grid);
+  
+  // Show visual tab by default
+  visualTabBtn.classList.add('active');
+  textTabBtn.classList.remove('active');
+  visualPreview.style.display = 'flex';
+  preview.style.display = 'none';
+  
+  // Display text preview (truncated if too long)
   const lines = result.output.split('\n');
   const previewLines = lines.slice(0, MAX_PREVIEW_LINES);
   if (lines.length > MAX_PREVIEW_LINES) {
@@ -376,9 +538,10 @@ function displayResult(result) {
   // Display stats
   const statsHtml = `
     <div><strong>Dimensions:</strong> ${result.stats.dimensions.width} × ${result.stats.dimensions.height}</div>
-    <div><strong>Total Emojis:</strong> ${result.stats.totalEmojis}</div>
-    <div><strong>Unique Emojis:</strong> ${result.stats.uniqueEmojis}</div>
-    <div><strong>Character Count:</strong> ${result.stats.characterCount}</div>
+    <div><strong>Total Emojis:</strong> ${result.stats.totalEmojis.toLocaleString()}</div>
+    <div><strong>Unique Emojis:</strong> ${result.stats.uniqueEmojis.toLocaleString()}</div>
+    <div><strong>Character Count:</strong> ${result.stats.characterCount.toLocaleString()}</div>
+    <div><strong>Emoji Diversity:</strong> ${((result.stats.uniqueEmojis / result.stats.totalEmojis) * 100).toFixed(1)}%</div>
     <div><strong>Top 5 Emojis:</strong></div>
     ${result.stats.topEmojis.map(e => `<div style="margin-left: 20px;">:${e.name}: (${e.count}×)</div>`).join('')}
   `;

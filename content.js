@@ -66,6 +66,8 @@
   // Track if extraction is in progress to prevent duplicate runs
   let extractionInProgress = false;
 
+  const COLOR_SAMPLER_VERSION = 3;
+
   // Send progress update to popup
   function sendProgressUpdate(phase, percent, details) {
     chrome.runtime.sendMessage({
@@ -361,69 +363,70 @@
   // Function to get the average color of an image
   function getAverageColor(imageUrl) {
     return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      
-      img.onload = function() {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        
-        ctx.drawImage(img, 0, 0);
-        
-        try {
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-          let r = 0, g = 0, b = 0, count = 0;
-          
-          // Sample pixels to get average color
-          for (let i = 0; i < data.length; i += PIXEL_SAMPLE_STEP) {
-            const alpha = data[i + 3];
-            if (alpha > TRANSPARENCY_THRESHOLD) { // Only count non-transparent pixels
-              r += data[i];
-              g += data[i + 1];
-              b += data[i + 2];
-              count++;
-            }
-          }
-          
-          if (count > 0) {
-            resolve({
-              r: Math.round(r / count),
-              g: Math.round(g / count),
-              b: Math.round(b / count)
-            });
-          } else {
-            resolve({ r: 255, g: 255, b: 255 }); // Default to white if all transparent
-          }
-        } catch (e) {
-          // CORS error or other issue
-          resolve({ r: 128, g: 128, b: 128 }); // Default to gray
+      chrome.runtime.sendMessage({ action: 'sampleEmojiColor', url: imageUrl }, (response) => {
+        if (chrome.runtime.lastError || !response) {
+          resolve({
+            color: { r: 128, g: 128, b: 128 },
+            accentColor: { r: 128, g: 128, b: 128 },
+            variance: 999,
+            colorError: true
+          });
+          return;
         }
-      };
-      
-      img.onerror = function() {
-        resolve({ r: 128, g: 128, b: 128 }); // Default to gray on error
-      };
-      
-      img.src = imageUrl;
+
+        resolve({
+          color: response.color || { r: 128, g: 128, b: 128 },
+          accentColor: response.accentColor || response.color || { r: 128, g: 128, b: 128 },
+          variance: typeof response.variance === 'number' ? response.variance : 999,
+          colorError: Boolean(response.colorError)
+        });
+      });
     });
   }
 
   // Process emojis in batches to avoid browser freezing with large emoji sets
-  async function processEmojisInBatches(emojis, batchSize = 100, onProgress = null) {
+  async function mapWithConcurrency(items, concurrency, mapper) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+      while (true) {
+        const i = nextIndex++;
+        if (i >= items.length) return;
+        results[i] = await mapper(items[i], i);
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
+  }
+
+  async function processEmojisInBatches(emojis, cachedByUrl, cachedVersion, forceResync, batchSize = 200, onProgress = null) {
     const results = [];
     const totalBatches = Math.ceil(emojis.length / batchSize);
     
     for (let i = 0; i < emojis.length; i += batchSize) {
       const batch = emojis.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(async (emoji) => {
-          const color = await getAverageColor(emoji.url);
-          return { ...emoji, color };
-        })
-      );
+
+      // Limit network + decode concurrency; 55k+ emoji sets will otherwise melt the tab.
+      const batchResults = await mapWithConcurrency(batch, 8, async (emoji) => {
+        if (!forceResync && cachedVersion === COLOR_SAMPLER_VERSION) {
+          const cached = cachedByUrl.get(emoji.url);
+          if (cached && cached.color && !cached.colorError) {
+            return {
+              ...emoji,
+              color: cached.color,
+              accentColor: cached.accentColor || cached.color,
+              variance: typeof cached.variance === 'number' ? cached.variance : 999,
+              colorError: false
+            };
+          }
+        }
+
+        const { color, accentColor, variance, colorError } = await getAverageColor(emoji.url);
+        return { ...emoji, color, accentColor, variance, colorError };
+      });
+
       results.push(...batchResults);
       
       const currentBatch = Math.floor(i / batchSize) + 1;
@@ -441,7 +444,7 @@
       );
       
       // Small delay between batches to keep UI responsive
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise(resolve => setTimeout(resolve, 25));
     }
     
     return results;
@@ -459,6 +462,8 @@
       
       extractionInProgress = true;
       sendProgressUpdate('Starting...', 5, 'Initializing extraction...');
+
+      const forceResync = Boolean(request.forceResync);
       
       // Try API method first, fall back to DOM extraction
       extractEmojisViaApi()
@@ -483,11 +488,28 @@
           if (emojis.length === 0) {
             throw new Error('No emojis found. Make sure you are on the Slack emoji customization page.');
           }
+
+          // Build cache lookup for reuse (performance: avoid re-sampling unchanged emoji URLs)
+          const cachedByUrl = new Map();
+          let cachedVersion = -1;
+          try {
+            const cached = await chrome.storage.local.get(['slackEmojis', 'colorSamplerVersion']);
+            cachedVersion = typeof cached.colorSamplerVersion === 'number' ? cached.colorSamplerVersion : -1;
+            if (Array.isArray(cached.slackEmojis)) {
+              for (const e of cached.slackEmojis) {
+                if (e && typeof e.url === 'string') {
+                  cachedByUrl.set(e.url, e);
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
           
           sendProgressUpdate('Analyzing colors...', 70, `Starting color analysis for ${emojis.length.toLocaleString()} emojis...`);
           
           // Get colors for each emoji in batches
-          return processEmojisInBatches(emojis, 100, (currentBatch, totalBatches, processedCount) => {
+          return processEmojisInBatches(emojis, cachedByUrl, cachedVersion, forceResync, 200, (currentBatch, totalBatches, processedCount) => {
             // Send progress updates
             console.log(`Processing batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
           }).then(emojisWithColors => ({ emojisWithColors, extractionMethod }));
@@ -498,7 +520,8 @@
           chrome.storage.local.set({ 
             slackEmojis: emojisWithColors,
             extractedAt: Date.now(),
-            extractionMethod: extractionMethod
+            extractionMethod: extractionMethod,
+            colorSamplerVersion: COLOR_SAMPLER_VERSION
           }, () => {
             sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
             extractionInProgress = false;

@@ -7,8 +7,16 @@
     "activeTab",
     "storage"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
-    "https://*.slack.com/*"
+    "https://*.slack.com/*",
+    "https://*.slack-edge.com/*",
+    "https://emoji.slack-edge.com/*",
+    "https://files.slack.com/*",
+    "https://*.slack-files.com/*",
+    "https://*.slack-imgs.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

@@ -146,11 +146,43 @@
             Duplicate Tolerance
             <span class="label-hint">(0-100)</span>
           </label>
-          <input type="range" id="toleranceRange" min="0" max="100" value="10">
+          <input type="range" id="toleranceRange" min="0" max="100" value="10" aria-label="Duplicate tolerance">
           <div class="range-value">
             <input type="number" id="tolerance" value="10" min="0" max="100">
           </div>
           <small>Lower values require more unique emojis</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dithering" checked>
+            <span>Dithering (better quality, slightly slower)</span>
+          </label>
+          <small>Helps gradients and subtle shading look closer to the source image</small>
+        </div>
+
+        <div class="input-group">
+          <label for="ditherStrength">
+            Dithering Strength
+            <span class="label-hint">(0-100)</span>
+          </label>
+          <input type="range" id="ditherStrengthRange" min="0" max="100" value="85" aria-label="Dithering strength">
+          <div class="range-value">
+            <input type="number" id="ditherStrength" value="85" min="0" max="100">
+          </div>
+          <small>Lower = smoother, higher = more detail/texture</small>
+        </div>
+
+        <div class="input-group">
+          <label for="texturePenalty">
+            Prefer Solid Emojis
+            <span class="label-hint">(0-100)</span>
+          </label>
+          <input type="range" id="texturePenaltyRange" min="0" max="100" value="55" aria-label="Prefer solid emojis">
+          <div class="range-value">
+            <input type="number" id="texturePenalty" value="55" min="0" max="100">
+          </div>
+          <small>Higher values avoid busy/outlined emojis for better photo-like results</small>
         </div>
       </div>
     </div>
