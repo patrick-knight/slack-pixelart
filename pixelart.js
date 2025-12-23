@@ -6,6 +6,9 @@ class PixelArtConverter {
   static AVG_EMOJI_LENGTH = 10; // Average length of emoji in Slack format (:emoji_name:)
   static FALLBACK_EMOJI = 'white_square'; // Emoji used for transparent/null pixels
   static MIN_DIMENSION = 5; // Minimum grid dimension
+  
+  // Emojis that are exempted from duplication rules (solid colors, blanks)
+  static EXEMPTED_EMOJI_PATTERNS = ['space', 'blank', 'white', 'black', 'red', 'blue', 'green', 'yellow', 'square'];
 
   constructor(emojis, options = {}) {
     this.emojis = emojis;
@@ -77,48 +80,75 @@ class PixelArtConverter {
     return candidates.length > 0 ? candidates : this.emojis;
   }
 
-  // Calculate color difference using Euclidean distance
+  // Calculate color difference using weighted Euclidean distance
+  // Human eyes are more sensitive to green, then red, then blue
   colorDistance(color1, color2) {
     const rDiff = color1.r - color2.r;
     const gDiff = color1.g - color2.g;
     const bDiff = color1.b - color2.b;
-    return Math.sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
+    // Weighted distance - gives more importance to perceptually significant differences
+    // Based on human eye sensitivity: green > red > blue
+    return Math.sqrt(2 * rDiff * rDiff + 4 * gDiff * gDiff + 3 * bDiff * bDiff);
   }
 
-  // Find the best matching emoji for a given color
-  findBestEmoji(targetColor) {
-    let bestEmoji = null;
-    let bestDistance = Infinity;
+  // Check if an emoji is exempted from duplication rules
+  isExemptedEmoji(emojiName) {
+    const lowerName = emojiName.toLowerCase();
+    return PixelArtConverter.EXEMPTED_EMOJI_PATTERNS.some(pattern => lowerName.includes(pattern));
+  }
 
+  // Find the best matching emoji for a given color (Python-style algorithm)
+  findBestEmoji(targetColor) {
     // Use spatial index to reduce search space for large emoji sets
     const candidates = this.getCandidateEmojis(targetColor);
+    
+    // Sort all candidates by color distance
+    const sortedCandidates = candidates
+      .map(emoji => ({
+        emoji,
+        distance: this.colorDistance(targetColor, emoji.color)
+      }))
+      .sort((a, b) => a.distance - b.distance);
 
-    for (const emoji of candidates) {
-      const distance = this.colorDistance(targetColor, emoji.color);
-      
-      if (distance < bestDistance) {
-        // Check if we can use this emoji based on tolerance
-        const usageCount = this.usedEmojis.get(emoji.name) || 0;
-        const maxUsage = Math.max(1, Math.floor((100 - this.options.tolerance) / 10));
-        
-        if (usageCount < maxUsage || this.options.tolerance >= 50) {
-          bestDistance = distance;
-          bestEmoji = emoji;
-          
-          // Early exit optimization: if we found a very close match, stop searching
-          if (distance < 5) { // RGB distance < 5 is essentially identical
-            break;
-          }
-        }
+    // If tolerance is 100 (allow duplicates), just return the closest match
+    if (this.options.tolerance >= 100) {
+      const closest = sortedCandidates[0]?.emoji;
+      if (closest) {
+        const count = this.usedEmojis.get(closest.name) || 0;
+        this.usedEmojis.set(closest.name, count + 1);
+      }
+      return closest;
+    }
+
+    // Find the best emoji considering duplication tolerance
+    for (const { emoji, distance } of sortedCandidates) {
+      const isExempted = this.isExemptedEmoji(emoji.name);
+      const usageCount = this.usedEmojis.get(emoji.name) || 0;
+
+      // Always allow exempted emojis or unused emojis
+      if (isExempted || usageCount === 0) {
+        this.usedEmojis.set(emoji.name, usageCount + 1);
+        return emoji;
+      }
+
+      // Calculate max allowed usage based on tolerance
+      // tolerance 0 = strict uniqueness (max 1 use)
+      // tolerance 100 = unlimited duplicates
+      const maxAllowedUsage = Math.max(1, Math.ceil(usageCount * (this.options.tolerance / 100)));
+
+      if (usageCount <= maxAllowedUsage) {
+        this.usedEmojis.set(emoji.name, usageCount + 1);
+        return emoji;
       }
     }
 
-    if (bestEmoji) {
-      const currentCount = this.usedEmojis.get(bestEmoji.name) || 0;
-      this.usedEmojis.set(bestEmoji.name, currentCount + 1);
+    // If no suitable alternative found, use the closest match anyway
+    const closest = sortedCandidates[0]?.emoji;
+    if (closest) {
+      const count = this.usedEmojis.get(closest.name) || 0;
+      this.usedEmojis.set(closest.name, count + 1);
     }
-
-    return bestEmoji;
+    return closest;
   }
 
   // Load and process an image
@@ -144,16 +174,63 @@ class PixelArtConverter {
     });
   }
 
-  // Extract pixel colors from an image
+  // High-quality image resizing using multi-step downscaling
+  // Similar to PIL's LANCZOS - reduces artifacts and aliasing
+  resizeImageHighQuality(img, targetWidth, targetHeight) {
+    // For significant downscaling, use multi-step approach
+    // This mimics LANCZOS-style quality by progressively halving
+    let currentWidth = img.width;
+    let currentHeight = img.height;
+    
+    // Create source canvas with original image
+    let sourceCanvas = document.createElement('canvas');
+    let sourceCtx = sourceCanvas.getContext('2d');
+    sourceCanvas.width = currentWidth;
+    sourceCanvas.height = currentHeight;
+    
+    // Fill with white background first (handles transparency like Python)
+    sourceCtx.fillStyle = '#FFFFFF';
+    sourceCtx.fillRect(0, 0, currentWidth, currentHeight);
+    sourceCtx.drawImage(img, 0, 0);
+    
+    // Progressive downscaling - halve dimensions until close to target
+    while (currentWidth / 2 > targetWidth && currentHeight / 2 > targetHeight) {
+      const newWidth = Math.floor(currentWidth / 2);
+      const newHeight = Math.floor(currentHeight / 2);
+      
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCanvas.width = newWidth;
+      tempCanvas.height = newHeight;
+      
+      tempCtx.imageSmoothingEnabled = true;
+      tempCtx.imageSmoothingQuality = 'high';
+      tempCtx.drawImage(sourceCanvas, 0, 0, newWidth, newHeight);
+      
+      sourceCanvas = tempCanvas;
+      sourceCtx = tempCtx;
+      currentWidth = newWidth;
+      currentHeight = newHeight;
+    }
+    
+    // Final resize to exact target dimensions
+    const finalCanvas = document.createElement('canvas');
+    const finalCtx = finalCanvas.getContext('2d');
+    finalCanvas.width = targetWidth;
+    finalCanvas.height = targetHeight;
+    
+    finalCtx.imageSmoothingEnabled = true;
+    finalCtx.imageSmoothingQuality = 'high';
+    finalCtx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+    
+    return finalCanvas;
+  }
+
+  // Extract pixel colors from an image with high-quality resampling
   extractPixelColors(img, width, height) {
-    const canvas = document.createElement('canvas');
+    // Use high-quality resizing
+    const canvas = this.resizeImageHighQuality(img, width, height);
     const ctx = canvas.getContext('2d');
-    
-    canvas.width = width;
-    canvas.height = height;
-    
-    // Draw the image scaled to the target dimensions
-    ctx.drawImage(img, 0, 0, width, height);
     
     const imageData = ctx.getImageData(0, 0, width, height);
     const pixels = [];
@@ -162,12 +239,24 @@ class PixelArtConverter {
       const row = [];
       for (let x = 0; x < width; x++) {
         const i = (y * width + x) * 4;
-        row.push({
-          r: imageData.data[i],
-          g: imageData.data[i + 1],
-          b: imageData.data[i + 2],
-          a: imageData.data[i + 3]
-        });
+        const r = imageData.data[i];
+        const g = imageData.data[i + 1];
+        const b = imageData.data[i + 2];
+        const a = imageData.data[i + 3];
+        
+        // Blend with white background for semi-transparent pixels
+        // This matches Python's transparency handling
+        if (a < 255) {
+          const alpha = a / 255;
+          row.push({
+            r: Math.round(r * alpha + 255 * (1 - alpha)),
+            g: Math.round(g * alpha + 255 * (1 - alpha)),
+            b: Math.round(b * alpha + 255 * (1 - alpha)),
+            a: 255 // Treat as fully opaque after blending
+          });
+        } else {
+          row.push({ r, g, b, a });
+        }
       }
       pixels.push(row);
     }
@@ -213,8 +302,8 @@ class PixelArtConverter {
       this.options.height
     );
     
-    // Extract pixel colors
-    if (onProgress) onProgress(30, 'Extracting colors...');
+    // Extract pixel colors with high-quality resampling
+    if (onProgress) onProgress(30, 'Processing image...');
     const pixels = this.extractPixelColors(img, dimensions.width, dimensions.height);
     
     // Reset usage tracking
@@ -231,13 +320,10 @@ class PixelArtConverter {
       for (let x = 0; x < dimensions.width; x++) {
         const pixel = pixels[y][x];
         
-        // Skip fully transparent pixels
-        if (pixel.a < PixelArtConverter.TRANSPARENCY_THRESHOLD) {
-          row.push(null);
-        } else {
-          const emoji = this.findBestEmoji(pixel);
-          row.push(emoji);
-        }
+        // All pixels are now properly blended with white background
+        // No need to skip transparent pixels
+        const emoji = this.findBestEmoji(pixel);
+        row.push(emoji);
         
         processedPixels++;
         if (onProgress && processedPixels % 10 === 0) {

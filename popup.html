@@ -29,12 +29,58 @@
       </div>
       <div class="card-body">
         <p class="help-text">Navigate to your workspace's emoji page and extract available emojis</p>
-        <button id="extractEmojis" class="btn btn-primary">
+        
+        <!-- Cache Info -->
+        <div id="cacheInfo" class="cache-info" style="display: none;">
+          <div class="cache-stats">
+            <span id="cacheCount">0 emojis cached</span>
+            <span id="cacheDate" class="cache-date"></span>
+          </div>
+          <div class="cache-actions">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoSync" checked>
+              <span>Auto-sync when new emojis detected</span>
+            </label>
+          </div>
+        </div>
+        
+        <!-- Sync Alert -->
+        <div id="syncAlert" class="sync-alert" style="display: none;">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8 4v4M8 10v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
-          Extract Emojis
-        </button>
+          <span id="syncAlertText">New emojis available!</span>
+        </div>
+        
+        <div class="extract-buttons">
+          <button id="extractEmojis" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span id="extractBtnText">Extract Emojis</span>
+          </button>
+          <button id="forceResync" class="btn btn-secondary" style="display: none;" title="Force re-extract all emojis">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M14 8A6 6 0 1 1 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M8 2V5L11 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Resync
+          </button>
+        </div>
+        
+        <!-- Extraction Progress -->
+        <div id="extractProgress" class="extract-progress" style="display: none;">
+          <div class="progress-header">
+            <span id="progressPhase">Fetching emojis...</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div id="extractProgressBar" class="progress-fill"></div>
+          </div>
+          <div id="progressDetails" class="progress-details">Starting...</div>
+        </div>
+        
         <div id="emojiStatus" class="status"></div>
       </div>
     </div>
@@ -134,7 +180,18 @@
         <h2>Preview</h2>
       </div>
       <div class="card-body">
-        <div id="preview" class="preview"></div>
+        <!-- Preview Tabs -->
+        <div class="preview-tabs">
+          <button id="visualTabBtn" class="preview-tab active">Visual</button>
+          <button id="textTabBtn" class="preview-tab">Text</button>
+        </div>
+        
+        <!-- Visual Preview (emoji images) -->
+        <div id="visualPreview" class="visual-preview"></div>
+        
+        <!-- Text Preview -->
+        <div id="preview" class="preview" style="display: none;"></div>
+        
         <div class="stats-card">
           <div id="stats" class="stats"></div>
         </div>
