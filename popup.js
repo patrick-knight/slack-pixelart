@@ -18,6 +18,7 @@ const widthInput = document.getElementById('width');
 const heightInput = document.getElementById('height');
 const charBudgetInput = document.getElementById('charBudget');
 const toleranceInput = document.getElementById('tolerance');
+const toleranceRange = document.getElementById('toleranceRange');
 const generateBtn = document.getElementById('generate');
 const generateStatus = document.getElementById('generateStatus');
 const progressBar = document.getElementById('progress');
@@ -31,6 +32,15 @@ const copyStatus = document.getElementById('copyStatus');
 
 let currentImageSource = null;
 let currentImageIsUrl = true;
+
+// Sync range slider with number input
+toleranceRange.addEventListener('input', (e) => {
+  toleranceInput.value = e.target.value;
+});
+
+toleranceInput.addEventListener('input', (e) => {
+  toleranceRange.value = e.target.value;
+});
 
 // Load saved emojis on popup open
 chrome.storage.local.get(['slackEmojis'], (result) => {
