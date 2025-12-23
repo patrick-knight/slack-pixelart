@@ -184,6 +184,18 @@
           </div>
           <small>Higher values avoid busy/outlined emojis for better photo-like results</small>
         </div>
+
+        <div class="input-group">
+          <label for="rasterSamples">
+            Raster Quality
+            <span class="label-hint">(1-5)</span>
+          </label>
+          <input type="range" id="rasterSamplesRange" min="1" max="5" value="3" aria-label="Raster quality">
+          <div class="range-value">
+            <input type="number" id="rasterSamples" value="3" min="1" max="5">
+          </div>
+          <small>Higher values sample more from the source image for better color matching</small>
+        </div>
       </div>
     </div>
     

@@ -20,6 +20,10 @@ class PixelArtConverter {
       dithering: options.dithering ?? true,
       ditheringStrength: options.ditheringStrength ?? 85,
       texturePenalty: options.texturePenalty ?? 55,
+      // Rasterization quality controls how we sample the *source* image into the target grid.
+      // Higher values = better color fidelity (and better matching), at modest CPU cost.
+      rasterSamples: options.rasterSamples ?? 3,
+      rasterMaxSourceSide: options.rasterMaxSourceSide ?? 2048,
       ...options
     };
     this.usedEmojis = new Map(); // Track emoji usage
@@ -362,42 +366,169 @@ class PixelArtConverter {
     return finalCanvas;
   }
 
-  // Extract pixel colors from an image with high-quality resampling
-  extractPixelColors(img, width, height) {
-    // Use high-quality resizing
-    const canvas = this.resizeImageHighQuality(img, width, height);
-    const ctx = canvas.getContext('2d');
-    
-    const imageData = ctx.getImageData(0, 0, width, height);
+  // Create an ImageData snapshot of the source image for sampling.
+  // Optionally downscales very large images first to keep memory/CPU bounded.
+  getSourceImageData(img) {
+    const maxSide = Math.max(1, this.options.rasterMaxSourceSide ?? 2048);
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const sw = Math.max(1, Math.floor(img.width * scale));
+    const sh = Math.max(1, Math.floor(img.height * scale));
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    canvas.width = sw;
+    canvas.height = sh;
+
+    // Draw without pre-filling; we handle alpha compositing ourselves in linear space.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, sw, sh);
+
+    return { imageData: ctx.getImageData(0, 0, sw, sh), sw, sh };
+  }
+
+  lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  // Sample the source image at (x, y) in source pixel coordinates using bilinear filtering.
+  // Returns linear RGB already composited over white in linear space.
+  sampleSourceLinear(imageData, sw, sh, x, y) {
+    const data = imageData.data;
+    const xClamped = Math.max(0, Math.min(sw - 1, x));
+    const yClamped = Math.max(0, Math.min(sh - 1, y));
+    const x0 = Math.floor(xClamped);
+    const y0 = Math.floor(yClamped);
+    const x1 = Math.min(sw - 1, x0 + 1);
+    const y1 = Math.min(sh - 1, y0 + 1);
+    const tx = xClamped - x0;
+    const ty = yClamped - y0;
+
+    const readLin = (px, py) => {
+      const i = (py * sw + px) * 4;
+      const r8 = data[i];
+      const g8 = data[i + 1];
+      const b8 = data[i + 2];
+      const a = data[i + 3] / 255;
+
+      // Convert sRGB -> linear then composite on white in linear space.
+      const r = a * this.srgb8ToLinear01(r8) + (1 - a) * 1.0;
+      const g = a * this.srgb8ToLinear01(g8) + (1 - a) * 1.0;
+      const b = a * this.srgb8ToLinear01(b8) + (1 - a) * 1.0;
+      return { r, g, b };
+    };
+
+    const c00 = readLin(x0, y0);
+    const c10 = readLin(x1, y0);
+    const c01 = readLin(x0, y1);
+    const c11 = readLin(x1, y1);
+
+    const rx0 = this.lerp(c00.r, c10.r, tx);
+    const gx0 = this.lerp(c00.g, c10.g, tx);
+    const bx0 = this.lerp(c00.b, c10.b, tx);
+    const rx1 = this.lerp(c01.r, c11.r, tx);
+    const gx1 = this.lerp(c01.g, c11.g, tx);
+    const bx1 = this.lerp(c01.b, c11.b, tx);
+
+    return {
+      r: this.lerp(rx0, rx1, ty),
+      g: this.lerp(gx0, gx1, ty),
+      b: this.lerp(bx0, bx1, ty)
+    };
+  }
+
+  // Rasterize the source image into a target grid with gamma-correct sampling.
+  // This generally matches the emoji palette better than relying solely on canvas downscaling.
+  rasterizeImage(img, targetWidth, targetHeight) {
+    const { imageData, sw, sh } = this.getSourceImageData(img);
+    const samples = Math.max(1, Math.min(8, parseInt(this.options.rasterSamples ?? 3, 10) || 3));
+
     const pixels = [];
-    
-    for (let y = 0; y < height; y++) {
+    for (let y = 0; y < targetHeight; y++) {
       const row = [];
-      for (let x = 0; x < width; x++) {
-        const i = (y * width + x) * 4;
-        const r = imageData.data[i];
-        const g = imageData.data[i + 1];
-        const b = imageData.data[i + 2];
-        const a = imageData.data[i + 3];
-        
-        // Blend with white background for semi-transparent pixels
-        // This matches Python's transparency handling
-        if (a < 255) {
-          const alpha = a / 255;
-          row.push({
-            r: Math.round(r * alpha + 255 * (1 - alpha)),
-            g: Math.round(g * alpha + 255 * (1 - alpha)),
-            b: Math.round(b * alpha + 255 * (1 - alpha)),
-            a: 255 // Treat as fully opaque after blending
-          });
-        } else {
-          row.push({ r, g, b, a });
+      for (let x = 0; x < targetWidth; x++) {
+        // Sample within the corresponding source region for this cell.
+        const x0 = (x * sw) / targetWidth;
+        const x1 = ((x + 1) * sw) / targetWidth;
+        const y0 = (y * sh) / targetHeight;
+        const y1 = ((y + 1) * sh) / targetHeight;
+
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+
+        for (let sy = 0; sy < samples; sy++) {
+          const fy = (sy + 0.5) / samples;
+          const srcY = this.lerp(y0, y1, fy);
+          for (let sx = 0; sx < samples; sx++) {
+            const fx = (sx + 0.5) / samples;
+            const srcX = this.lerp(x0, x1, fx);
+            const c = this.sampleSourceLinear(imageData, sw, sh, srcX, srcY);
+            sumR += c.r;
+            sumG += c.g;
+            sumB += c.b;
+          }
         }
+
+        const inv = 1 / (samples * samples);
+        const avgLin = {
+          r: sumR * inv,
+          g: sumG * inv,
+          b: sumB * inv
+        };
+
+        row.push({
+          r: this.linear01ToSrgb8(this.clamp01(avgLin.r)),
+          g: this.linear01ToSrgb8(this.clamp01(avgLin.g)),
+          b: this.linear01ToSrgb8(this.clamp01(avgLin.b)),
+          a: 255
+        });
       }
       pixels.push(row);
     }
-    
     return pixels;
+  }
+
+  // Extract pixel colors from an image with high-quality resampling
+  extractPixelColors(img, width, height) {
+    // Prefer gamma-correct supersampled rasterization for best palette matching.
+    // This avoids subtle hue shifts that come from naive sRGB downscaling.
+    try {
+      return this.rasterizeImage(img, width, height);
+    } catch {
+      // Fallback to canvas downscale if something goes wrong.
+      const canvas = this.resizeImageHighQuality(img, width, height);
+      const ctx = canvas.getContext('2d');
+
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const pixels = [];
+
+      for (let y = 0; y < height; y++) {
+        const row = [];
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const r = imageData.data[i];
+          const g = imageData.data[i + 1];
+          const b = imageData.data[i + 2];
+          const a = imageData.data[i + 3];
+
+          if (a < 255) {
+            const alpha = a / 255;
+            row.push({
+              r: Math.round(r * alpha + 255 * (1 - alpha)),
+              g: Math.round(g * alpha + 255 * (1 - alpha)),
+              b: Math.round(b * alpha + 255 * (1 - alpha)),
+              a: 255
+            });
+          } else {
+            row.push({ r, g, b, a });
+          }
+        }
+        pixels.push(row);
+      }
+
+      return pixels;
+    }
   }
 
   // Adjust dimensions to fit within character budget

@@ -38,6 +38,8 @@ const ditherStrengthInput = document.getElementById('ditherStrength');
 const ditherStrengthRange = document.getElementById('ditherStrengthRange');
 const texturePenaltyInput = document.getElementById('texturePenalty');
 const texturePenaltyRange = document.getElementById('texturePenaltyRange');
+const rasterSamplesInput = document.getElementById('rasterSamples');
+const rasterSamplesRange = document.getElementById('rasterSamplesRange');
 const generateBtn = document.getElementById('generate');
 const generateStatus = document.getElementById('generateStatus');
 const progressBar = document.getElementById('progress');
@@ -244,8 +246,16 @@ texturePenaltyInput.addEventListener('input', (e) => {
   texturePenaltyRange.value = e.target.value;
 });
 
+rasterSamplesRange.addEventListener('input', (e) => {
+  rasterSamplesInput.value = e.target.value;
+});
+
+rasterSamplesInput.addEventListener('input', (e) => {
+  rasterSamplesRange.value = e.target.value;
+});
+
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples'], (result) => {
   if (result.slackEmojis && result.slackEmojis.length > 0) {
     currentEmojis = result.slackEmojis;
     cachedEmojiCount = result.slackEmojis.length;
@@ -274,6 +284,11 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering',
     texturePenaltyInput.value = result.texturePenalty;
     texturePenaltyRange.value = result.texturePenalty;
   }
+
+  if (result.rasterSamples !== undefined) {
+    rasterSamplesInput.value = result.rasterSamples;
+    rasterSamplesRange.value = result.rasterSamples;
+  }
 });
 
 // Save auto-sync preference when changed
@@ -291,6 +306,10 @@ ditherStrengthInput.addEventListener('change', () => {
 
 texturePenaltyInput.addEventListener('change', () => {
   chrome.storage.local.set({ texturePenalty: parseInt(texturePenaltyInput.value) });
+});
+
+rasterSamplesInput.addEventListener('change', () => {
+  chrome.storage.local.set({ rasterSamples: parseInt(rasterSamplesInput.value) });
 });
 
 // Extract emojis from current tab
@@ -436,7 +455,8 @@ generateBtn.addEventListener('click', async () => {
       tolerance: parseInt(toleranceInput.value),
       dithering: ditheringCheckbox.checked,
       ditheringStrength: parseInt(ditherStrengthInput.value),
-      texturePenalty: parseInt(texturePenaltyInput.value)
+      texturePenalty: parseInt(texturePenaltyInput.value),
+      rasterSamples: parseInt(rasterSamplesInput.value)
     };
     
     const converter = new PixelArtConverter(currentEmojis, options);
