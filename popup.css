@@ -10,8 +10,7 @@ body {
   line-height: 1.6;
   color: #1a1a1a;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  min-width: 420px;
-  max-width: 420px;
+  width: 420px;
   min-height: 600px;
 }
 
@@ -407,7 +406,8 @@ small {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #667eea 100%);
+  background-size: 200% 100%;
   transition: width 0.3s ease;
   width: 0%;
   animation: shimmer 2s infinite;
