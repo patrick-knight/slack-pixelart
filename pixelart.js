@@ -1,6 +1,12 @@
 // Core pixel art conversion logic
 
 class PixelArtConverter {
+  // Constants
+  static TRANSPARENCY_THRESHOLD = 128; // Alpha value threshold for considering pixels as opaque
+  static AVG_EMOJI_LENGTH = 10; // Average length of emoji in Slack format (:emoji_name:)
+  static FALLBACK_EMOJI = 'white_square'; // Emoji used for transparent/null pixels
+  static MIN_DIMENSION = 5; // Minimum grid dimension
+
   constructor(emojis, options = {}) {
     this.emojis = emojis;
     this.options = {
@@ -109,9 +115,7 @@ class PixelArtConverter {
       return { width, height };
     }
 
-    // Average emoji name length in Slack format (:emoji:) is about 10 characters
-    const avgEmojiLength = 10;
-    const maxPixels = Math.floor(this.options.charBudget / avgEmojiLength);
+    const maxPixels = Math.floor(this.options.charBudget / PixelArtConverter.AVG_EMOJI_LENGTH);
     const currentPixels = width * height;
 
     if (currentPixels <= maxPixels) {
@@ -121,8 +125,8 @@ class PixelArtConverter {
     // Scale down proportionally
     const scale = Math.sqrt(maxPixels / currentPixels);
     return {
-      width: Math.max(5, Math.floor(width * scale)),
-      height: Math.max(5, Math.floor(height * scale))
+      width: Math.max(PixelArtConverter.MIN_DIMENSION, Math.floor(width * scale)),
+      height: Math.max(PixelArtConverter.MIN_DIMENSION, Math.floor(height * scale))
     };
   }
 
@@ -162,7 +166,7 @@ class PixelArtConverter {
         const pixel = pixels[y][x];
         
         // Skip fully transparent pixels
-        if (pixel.a < 128) {
+        if (pixel.a < PixelArtConverter.TRANSPARENCY_THRESHOLD) {
           row.push(null);
         } else {
           const emoji = this.findBestEmoji(pixel);
@@ -198,7 +202,7 @@ class PixelArtConverter {
     
     for (const row of grid) {
       const line = row
-        .map(emoji => emoji ? `:${emoji.name}:` : ':white_square:')
+        .map(emoji => emoji ? `:${emoji.name}:` : `:${PixelArtConverter.FALLBACK_EMOJI}:`)
         .join('');
       lines.push(line);
     }
@@ -243,12 +247,14 @@ class PixelArtConverter {
   // Calculate total character count
   calculateCharacterCount(grid) {
     let count = 0;
+    const fallbackLength = `:${PixelArtConverter.FALLBACK_EMOJI}:`.length;
+    
     for (const row of grid) {
       for (const emoji of row) {
         if (emoji) {
           count += emoji.name.length + 2; // +2 for the colons
         } else {
-          count += 14; // :white_square: length
+          count += fallbackLength;
         }
       }
     }

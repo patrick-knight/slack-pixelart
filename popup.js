@@ -1,5 +1,9 @@
 // Popup script - handles UI interactions and coordinates conversion
 
+// Constants
+const MAX_PREVIEW_LINES = 15; // Maximum lines to show in preview
+const STATUS_MESSAGE_TIMEOUT = 2000; // Time to show status messages (ms)
+
 let currentEmojis = [];
 let currentResult = null;
 
@@ -168,7 +172,7 @@ copyToClipboardBtn.addEventListener('click', async () => {
     showStatus(copyStatus, 'Copied to clipboard!', 'success');
     setTimeout(() => {
       copyStatus.style.display = 'none';
-    }, 2000);
+    }, STATUS_MESSAGE_TIMEOUT);
   } catch (error) {
     showStatus(copyStatus, 'Failed to copy: ' + error.message, 'error');
   }
@@ -191,7 +195,7 @@ downloadTextBtn.addEventListener('click', () => {
   showStatus(copyStatus, 'Downloaded!', 'success');
   setTimeout(() => {
     copyStatus.style.display = 'none';
-  }, 2000);
+  }, STATUS_MESSAGE_TIMEOUT);
 });
 
 // Helper functions
@@ -209,8 +213,8 @@ function checkReadyToGenerate() {
 function displayResult(result) {
   // Display preview (truncated if too long)
   const lines = result.output.split('\n');
-  const previewLines = lines.slice(0, 15);
-  if (lines.length > 15) {
+  const previewLines = lines.slice(0, MAX_PREVIEW_LINES);
+  if (lines.length > MAX_PREVIEW_LINES) {
     previewLines.push('... (truncated in preview)');
   }
   preview.textContent = previewLines.join('\n');

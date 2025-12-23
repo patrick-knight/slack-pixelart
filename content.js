@@ -2,6 +2,10 @@
 
 (function() {
   'use strict';
+  
+  // Constants
+  const TRANSPARENCY_THRESHOLD = 128; // Alpha value threshold for considering pixels as opaque
+  const PIXEL_SAMPLE_STEP = 16; // Sample every 4th pixel (4 RGBA values per pixel)
 
   // Function to extract emoji data from the page
   function extractEmojiData() {
@@ -69,9 +73,9 @@
           let r = 0, g = 0, b = 0, count = 0;
           
           // Sample pixels to get average color
-          for (let i = 0; i < data.length; i += 16) { // Sample every 4th pixel for performance
+          for (let i = 0; i < data.length; i += PIXEL_SAMPLE_STEP) {
             const alpha = data[i + 3];
-            if (alpha > 128) { // Only count non-transparent pixels
+            if (alpha > TRANSPARENCY_THRESHOLD) { // Only count non-transparent pixels
               r += data[i];
               g += data[i + 1];
               b += data[i + 2];
