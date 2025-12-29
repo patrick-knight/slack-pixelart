@@ -40,6 +40,11 @@ const texturePenaltyInput = document.getElementById('texturePenalty');
 const texturePenaltyRange = document.getElementById('texturePenaltyRange');
 const rasterSamplesInput = document.getElementById('rasterSamples');
 const rasterSamplesRange = document.getElementById('rasterSamplesRange');
+const lanczosInterpolationCheckbox = document.getElementById('lanczosInterpolation');
+const adaptiveSamplingCheckbox = document.getElementById('adaptiveSampling');
+const adaptiveDitheringCheckbox = document.getElementById('adaptiveDithering');
+const sharpeningStrengthInput = document.getElementById('sharpeningStrength');
+const sharpeningStrengthRange = document.getElementById('sharpeningStrengthRange');
 const generateBtn = document.getElementById('generate');
 const generateStatus = document.getElementById('generateStatus');
 const progressBar = document.getElementById('progress');
@@ -254,8 +259,16 @@ rasterSamplesInput.addEventListener('input', (e) => {
   rasterSamplesRange.value = e.target.value;
 });
 
+sharpeningStrengthRange.addEventListener('input', (e) => {
+  sharpeningStrengthInput.value = e.target.value;
+});
+
+sharpeningStrengthInput.addEventListener('input', (e) => {
+  sharpeningStrengthRange.value = e.target.value;
+});
+
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength'], (result) => {
   if (result.slackEmojis && result.slackEmojis.length > 0) {
     currentEmojis = result.slackEmojis;
     cachedEmojiCount = result.slackEmojis.length;
@@ -289,6 +302,24 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering',
     rasterSamplesInput.value = result.rasterSamples;
     rasterSamplesRange.value = result.rasterSamples;
   }
+
+  // Load new quality enhancement preferences
+  if (result.lanczosInterpolation !== undefined) {
+    lanczosInterpolationCheckbox.checked = result.lanczosInterpolation;
+  }
+
+  if (result.adaptiveSampling !== undefined) {
+    adaptiveSamplingCheckbox.checked = result.adaptiveSampling;
+  }
+
+  if (result.adaptiveDithering !== undefined) {
+    adaptiveDitheringCheckbox.checked = result.adaptiveDithering;
+  }
+
+  if (result.sharpeningStrength !== undefined) {
+    sharpeningStrengthInput.value = result.sharpeningStrength;
+    sharpeningStrengthRange.value = result.sharpeningStrength;
+  }
 });
 
 // Save auto-sync preference when changed
@@ -310,6 +341,22 @@ texturePenaltyInput.addEventListener('change', () => {
 
 rasterSamplesInput.addEventListener('change', () => {
   chrome.storage.local.set({ rasterSamples: parseInt(rasterSamplesInput.value) });
+});
+
+lanczosInterpolationCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ lanczosInterpolation: lanczosInterpolationCheckbox.checked });
+});
+
+adaptiveSamplingCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ adaptiveSampling: adaptiveSamplingCheckbox.checked });
+});
+
+adaptiveDitheringCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ adaptiveDithering: adaptiveDitheringCheckbox.checked });
+});
+
+sharpeningStrengthInput.addEventListener('change', () => {
+  chrome.storage.local.set({ sharpeningStrength: parseInt(sharpeningStrengthInput.value) });
 });
 
 // Extract emojis from current tab
@@ -456,9 +503,13 @@ generateBtn.addEventListener('click', async () => {
       dithering: ditheringCheckbox.checked,
       ditheringStrength: parseInt(ditherStrengthInput.value),
       texturePenalty: parseInt(texturePenaltyInput.value),
-      rasterSamples: parseInt(rasterSamplesInput.value)
+      rasterSamples: parseInt(rasterSamplesInput.value),
+      lanczosInterpolation: lanczosInterpolationCheckbox.checked,
+      adaptiveSampling: adaptiveSamplingCheckbox.checked,
+      adaptiveDithering: adaptiveDitheringCheckbox.checked,
+      sharpeningStrength: parseInt(sharpeningStrengthInput.value)
     };
-    
+
     const converter = new PixelArtConverter(currentEmojis, options);
     
     const result = await converter.convert(

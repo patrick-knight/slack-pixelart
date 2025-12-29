@@ -196,6 +196,42 @@
           </div>
           <small>Higher values sample more from the source image for better color matching</small>
         </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="lanczosInterpolation" checked>
+            <span>Lanczos3 Interpolation (higher quality)</span>
+          </label>
+          <small>Superior resampling algorithm for sharper details, slightly slower than bilinear</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="adaptiveSampling" checked>
+            <span>Adaptive Supersampling (edge detection)</span>
+          </label>
+          <small>Uses more samples in high-detail regions for better edge quality</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="adaptiveDithering" checked>
+            <span>Adaptive Dithering (texture-aware)</span>
+          </label>
+          <small>Reduces dithering in detailed areas, increases in smooth gradients</small>
+        </div>
+
+        <div class="input-group">
+          <label for="sharpeningStrength">
+            Sharpening Strength
+            <span class="label-hint">(0-100)</span>
+          </label>
+          <input type="range" id="sharpeningStrengthRange" min="0" max="100" value="0" aria-label="Sharpening strength">
+          <div class="range-value">
+            <input type="number" id="sharpeningStrength" value="0" min="0" max="100">
+          </div>
+          <small>Enhances edges and fine details (0 = off, 50-70 recommended)</small>
+        </div>
       </div>
     </div>
     

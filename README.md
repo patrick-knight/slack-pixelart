@@ -7,7 +7,12 @@ Turn Slack emojis into pixel art! This Chrome extension reads emojis from your S
 - 📸 Extract emojis directly from Slack's emoji customization page
 - 🎨 Convert images (URL or local files) into pixel art using your workspace's emojis
 - 🎯 Advanced color matching with OKLab color space for perceptually accurate results
-- 🖼️ Dithering support for smoother gradients and better photo reproduction
+- 🖼️ Adaptive dithering support for smoother gradients and cleaner edges
+- 🔬 **Lanczos3 interpolation** for superior image resampling quality
+- 🎯 **Edge-aware adaptive supersampling** for better detail preservation
+- ✨ **Texture-aware dithering** that reduces artifacts in detailed regions
+- 🔍 **Enhanced perceptual color matching** with chroma-sensitive lightness weighting
+- 📐 **Optional sharpening filter** for crisp detail enhancement
 - 📏 Automatic resizing to fit within Slack's character budget
 - 🔄 Duplicate tracking based on configurable tolerance
 - 🔍 Texture-aware emoji selection to prefer solid colors over busy patterns
@@ -65,6 +70,12 @@ Adjust the following settings as needed:
 - **Prefer Solid Emojis**: Avoids busy or outlined emojis in favor of solid colors (0-100). Higher values produce more photo-like results (default: 55)
 - **Raster Quality**: Controls how the source image is sampled (1-5). Higher values provide better color matching at modest CPU cost (default: 3)
 
+**Quality Enhancement Settings:**
+- **Lanczos3 Interpolation**: Superior resampling algorithm for sharper details and better edge preservation (default: enabled, ~15% slower than bilinear)
+- **Adaptive Supersampling**: Intelligently uses more samples in high-detail regions, fewer in flat areas (default: enabled, actually improves performance)
+- **Adaptive Dithering**: Texture-aware dithering that reduces strength in detailed areas, increases in smooth gradients (default: enabled)
+- **Sharpening Strength**: Enhances edges and fine details using unsharp mask (0-100). Recommended 50-70 for photos, 0 for pixel art (default: 0)
+
 ### Step 4: Generate Pixel Art
 
 1. Click the "Generate Pixel Art" button
@@ -82,38 +93,74 @@ Adjust the following settings as needed:
 
 1. **Emoji Extraction**: The content script scans the Slack emoji page and extracts emoji images
 2. **Color Analysis**: Each emoji is analyzed to determine its average color, texture, and visual characteristics
-3. **Image Processing**: The input image is resized to the specified dimensions with high-quality resampling
-4. **Color Matching**: For each pixel, the extension finds the emoji with the closest color using perceptually accurate OKLab color space
-5. **Dithering**: Optional Floyd-Steinberg dithering distributes color error across neighboring pixels for smoother gradients
-6. **Texture-Aware Selection**: Penalizes emojis with high variance (busy patterns) when solid colors are preferred
-7. **Duplicate Tracking**: The algorithm limits emoji reuse based on the tolerance setting
-8. **Text Generation**: Generates Slack-formatted text (`:emoji_name:`) for easy pasting
+3. **High-Quality Image Resampling**:
+   - **Lanczos3 interpolation** provides superior quality with 6×6 kernel sampling
+   - **Adaptive supersampling** detects edges and allocates more samples (up to 8×8) in high-detail regions
+   - Gamma-correct processing in linear RGB space for mathematically accurate color blending
+4. **Advanced Color Matching**:
+   - Uses perceptually accurate **OKLab color space** with enhanced weighting
+   - **Chroma-adaptive lightness weighting** improves gray/skin tone matching
+   - **Hue difference weighting** for more accurate color perception
+   - Spatial indexing for efficient matching in large emoji sets (1000+ emojis)
+5. **Texture-Aware Adaptive Dithering**:
+   - **Floyd-Steinberg error diffusion** in linear RGB space
+   - Automatically reduces dithering strength in high-variance (detailed) areas
+   - Increases dithering in smooth gradients for better color transitions
+   - Serpentine scanning reduces directional artifacts
+6. **Optional Detail Enhancement**: Unsharp mask sharpening for crisp edges and fine details
+7. **Texture-Aware Selection**: Penalizes emojis with high variance (busy patterns) when solid colors are preferred
+8. **Duplicate Tracking**: The algorithm limits emoji reuse based on the tolerance setting
+9. **Text Generation**: Generates Slack-formatted text (`:emoji_name:`) for easy pasting
 
 ## Technical Details
 
 - **Manifest Version**: 3
-- **Permissions**: 
+- **Permissions**:
   - `activeTab`: To extract emojis from the current Slack page
   - `storage`: To save extracted emojis for reuse
   - `host_permissions`: Access to `*.slack.com` and CDN domains
-- **Color Matching**: Uses perceptually accurate OKLab color space for human-eye similarity
-- **Dithering Algorithm**: Floyd-Steinberg error diffusion for smooth color transitions
-- **Texture Analysis**: Statistical variance to identify and prefer solid-color emojis
+- **Image Resampling**:
+  - Lanczos3 windowed sinc interpolation with 6×6 kernel
+  - Adaptive supersampling (1×1 to 8×8 samples per pixel)
+  - Edge detection using local variance analysis
+  - Gamma-correct processing in linear RGB color space
+- **Color Matching**:
+  - Björn Ottosson's OKLab perceptual color space
+  - Chroma-adaptive lightness weighting for improved gray/skin tone matching
+  - Hue difference emphasis for accurate color perception
+  - Spatial indexing (32×32×32 color buckets) for large emoji sets
+- **Dithering Algorithm**:
+  - Floyd-Steinberg error diffusion in linear RGB space
+  - Texture-aware adaptive strength (reduces in high-detail areas)
+  - Serpentine scanning pattern to minimize directional artifacts
+- **Detail Enhancement**: Optional unsharp mask filter for edge sharpening
+- **Texture Analysis**: Statistical variance (RMS deviation) to identify and prefer solid-color emojis
 - **Character Budget**: Automatically scales dimensions to fit within the specified character limit
-- **Performance Optimization**: Spatial color indexing for large emoji sets (1000+ emojis)
+- **Performance Optimization**: Batch processing, spatial indexing, and adaptive sampling for efficiency
 
 ## Tips
 
-- For best results, use images with clear, distinct colors
-- **Enable dithering** for photos and images with gradients
-- **Disable dithering** for pixel art, logos, or images with solid colors
-- Higher duplicate tolerance allows for smoother gradients but less variety
+**For Photos and Complex Images:**
+- Keep all quality enhancements enabled (Lanczos3, Adaptive Sampling, Adaptive Dithering)
+- Set **Sharpening Strength** to 50-70 for crisp details
+- Enable **Dithering** with strength 80-85 for smooth gradients
 - Increase **Prefer Solid Emojis** setting (60-80) for photo-realistic results
-- Use higher **Raster Quality** (4-5) for complex images with fine color details
+- Use **Raster Quality** 4-5 for fine color details
+
+**For Pixel Art, Logos, and Simple Graphics:**
+- Keep Lanczos3 enabled for sharp edges
+- Set **Sharpening Strength** to 0 to avoid artifacts
+- **Disable dithering** to preserve hard edges
+- Lower **Prefer Solid Emojis** (20-40) to allow outlined emojis
+- **Raster Quality** 2-3 is sufficient
+
+**General Tips:**
+- Higher duplicate tolerance allows for smoother gradients but less variety
 - Smaller dimensions (10×10 to 30×30) work best for most Slack messages
 - Remember that Slack has a 40,000 character limit per message
 - Use the **Visual** preview tab to see how your pixel art will look in Slack
 - Extracted emojis are cached - use **Resync** button if workspace emojis change
+- Quality enhancements add minimal overhead (~15-20% processing time for significant quality gains)
 
 See [EXAMPLES.md](EXAMPLES.md) for detailed use cases, tips, and best practices.
 

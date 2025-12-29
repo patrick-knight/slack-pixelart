@@ -87,12 +87,26 @@ class PixelArtConverter {
     };
   }
 
-  oklabDistance(lab1, lab2) {
-    // Weighted OKLab distance (prioritize lightness a bit)
-    const dL = (lab1.L - lab2.L) * 1.6;
+  oklabDistance(lab1, lab2, emphasizeLightness = false) {
+    // Weighted OKLab distance with improved perceptual weighting
+    // Lightness is more important in low-saturation regions
+    const chromaL1 = Math.sqrt(lab1.a * lab1.a + lab1.b * lab1.b);
+    const chromaL2 = Math.sqrt(lab2.a * lab2.a + lab2.b * lab2.b);
+    const avgChroma = (chromaL1 + chromaL2) / 2;
+
+    // Increase lightness weight for desaturated colors, decrease for saturated
+    // This improves matching for grays while preserving color accuracy
+    const lightnessWeight = emphasizeLightness ? 2.0 : (1.6 + (0.4 * Math.exp(-avgChroma * 3)));
+
+    const dL = (lab1.L - lab2.L) * lightnessWeight;
     const da = lab1.a - lab2.a;
     const db = lab1.b - lab2.b;
-    return Math.sqrt(dL * dL + da * da + db * db);
+
+    // Enhanced chroma and hue difference weighting
+    const dC = chromaL1 - chromaL2;
+    const dH2 = da * da + db * db - dC * dC; // Hue difference squared
+
+    return Math.sqrt(dL * dL + da * da + db * db + Math.max(0, dH2) * 0.25);
   }
 
   clamp01(v) {
@@ -391,6 +405,61 @@ class PixelArtConverter {
     return a + (b - a) * t;
   }
 
+  // Lanczos3 kernel function for high-quality resampling
+  lanczos3(x) {
+    if (x === 0) return 1;
+    if (x < -3 || x > 3) return 0;
+    const pi = Math.PI;
+    const px = pi * x;
+    return (3 * Math.sin(px) * Math.sin(px / 3)) / (px * px);
+  }
+
+  // Sample using Lanczos3 interpolation for superior quality
+  sampleSourceLanczos(imageData, sw, sh, x, y) {
+    const data = imageData.data;
+    const xClamped = Math.max(0, Math.min(sw - 1, x));
+    const yClamped = Math.max(0, Math.min(sh - 1, y));
+    const x0 = Math.floor(xClamped);
+    const y0 = Math.floor(yClamped);
+
+    let sumR = 0, sumG = 0, sumB = 0, sumWeight = 0;
+
+    // Sample a 6x6 neighborhood (Lanczos3 kernel size)
+    for (let dy = -2; dy <= 3; dy++) {
+      const py = Math.max(0, Math.min(sh - 1, y0 + dy));
+      const wy = this.lanczos3(yClamped - py);
+
+      for (let dx = -2; dx <= 3; dx++) {
+        const px = Math.max(0, Math.min(sw - 1, x0 + dx));
+        const wx = this.lanczos3(xClamped - px);
+        const weight = wx * wy;
+
+        const i = (py * sw + px) * 4;
+        const r8 = data[i];
+        const g8 = data[i + 1];
+        const b8 = data[i + 2];
+        const a = data[i + 3] / 255;
+
+        // Convert sRGB -> linear then composite on white in linear space
+        const r = a * this.srgb8ToLinear01(r8) + (1 - a) * 1.0;
+        const g = a * this.srgb8ToLinear01(g8) + (1 - a) * 1.0;
+        const b = a * this.srgb8ToLinear01(b8) + (1 - a) * 1.0;
+
+        sumR += r * weight;
+        sumG += g * weight;
+        sumB += b * weight;
+        sumWeight += weight;
+      }
+    }
+
+    const inv = sumWeight > 0 ? 1 / sumWeight : 1;
+    return {
+      r: sumR * inv,
+      g: sumG * inv,
+      b: sumB * inv
+    };
+  }
+
   // Sample the source image at (x, y) in source pixel coordinates using bilinear filtering.
   // Returns linear RGB already composited over white in linear space.
   sampleSourceLinear(imageData, sw, sh, x, y) {
@@ -437,11 +506,42 @@ class PixelArtConverter {
     };
   }
 
+  // Detect edge strength in a region for adaptive sampling
+  detectEdge(imageData, sw, sh, x0, x1, y0, y1) {
+    // Sample center and corners to estimate variance
+    const centerX = (x0 + x1) / 2;
+    const centerY = (y0 + y1) / 2;
+
+    const samples = [
+      this.sampleSourceLanczos(imageData, sw, sh, x0, y0),
+      this.sampleSourceLanczos(imageData, sw, sh, x1, y0),
+      this.sampleSourceLanczos(imageData, sw, sh, x0, y1),
+      this.sampleSourceLanczos(imageData, sw, sh, x1, y1),
+      this.sampleSourceLanczos(imageData, sw, sh, centerX, centerY)
+    ];
+
+    // Calculate color variance (higher = more edge detail)
+    let varR = 0, varG = 0, varB = 0;
+    const avgR = samples.reduce((s, c) => s + c.r, 0) / 5;
+    const avgG = samples.reduce((s, c) => s + c.g, 0) / 5;
+    const avgB = samples.reduce((s, c) => s + c.b, 0) / 5;
+
+    for (const s of samples) {
+      varR += (s.r - avgR) ** 2;
+      varG += (s.g - avgG) ** 2;
+      varB += (s.b - avgB) ** 2;
+    }
+
+    return Math.sqrt((varR + varG + varB) / 15);
+  }
+
   // Rasterize the source image into a target grid with gamma-correct sampling.
   // This generally matches the emoji palette better than relying solely on canvas downscaling.
   rasterizeImage(img, targetWidth, targetHeight) {
     const { imageData, sw, sh } = this.getSourceImageData(img);
-    const samples = Math.max(1, Math.min(8, parseInt(this.options.rasterSamples ?? 3, 10) || 3));
+    const baseSamples = Math.max(1, Math.min(8, parseInt(this.options.rasterSamples ?? 3, 10) || 3));
+    const useAdaptive = this.options.adaptiveSampling ?? true;
+    const useLanczos = this.options.lanczosInterpolation ?? true;
 
     const pixels = [];
     for (let y = 0; y < targetHeight; y++) {
@@ -453,9 +553,19 @@ class PixelArtConverter {
         const y0 = (y * sh) / targetHeight;
         const y1 = ((y + 1) * sh) / targetHeight;
 
+        // Adaptive sampling: use more samples in high-detail regions
+        let samples = baseSamples;
+        if (useAdaptive) {
+          const edgeStrength = this.detectEdge(imageData, sw, sh, x0, x1, y0, y1);
+          // Scale samples from baseSamples to baseSamples*2 based on edge strength
+          samples = Math.min(8, Math.max(baseSamples, Math.ceil(baseSamples * (1 + edgeStrength * 2))));
+        }
+
         let sumR = 0;
         let sumG = 0;
         let sumB = 0;
+
+        const sampleFunc = useLanczos ? this.sampleSourceLanczos : this.sampleSourceLinear;
 
         for (let sy = 0; sy < samples; sy++) {
           const fy = (sy + 0.5) / samples;
@@ -463,7 +573,7 @@ class PixelArtConverter {
           for (let sx = 0; sx < samples; sx++) {
             const fx = (sx + 0.5) / samples;
             const srcX = this.lerp(x0, x1, fx);
-            const c = this.sampleSourceLinear(imageData, sw, sh, srcX, srcY);
+            const c = sampleFunc.call(this, imageData, sw, sh, srcX, srcY);
             sumR += c.r;
             sumG += c.g;
             sumB += c.b;
@@ -489,19 +599,66 @@ class PixelArtConverter {
     return pixels;
   }
 
+  // Apply unsharp mask for detail enhancement
+  applySharpeningFilter(pixels, width, height, strength = 0.5) {
+    if (strength <= 0) return pixels;
+
+    const sharpened = [];
+    const radius = 1;
+
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) {
+        const center = pixels[y][x];
+
+        // Calculate Gaussian blur (approximate with simple average)
+        let blurR = 0, blurG = 0, blurB = 0;
+        let count = 0;
+
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const ny = Math.max(0, Math.min(height - 1, y + dy));
+            const nx = Math.max(0, Math.min(width - 1, x + dx));
+            const p = pixels[ny][nx];
+            blurR += p.r;
+            blurG += p.g;
+            blurB += p.b;
+            count++;
+          }
+        }
+
+        blurR /= count;
+        blurG /= count;
+        blurB /= count;
+
+        // Unsharp mask: sharp = original + strength * (original - blur)
+        row.push({
+          r: Math.max(0, Math.min(255, Math.round(center.r + strength * (center.r - blurR)))),
+          g: Math.max(0, Math.min(255, Math.round(center.g + strength * (center.g - blurG)))),
+          b: Math.max(0, Math.min(255, Math.round(center.b + strength * (center.b - blurB)))),
+          a: center.a
+        });
+      }
+      sharpened.push(row);
+    }
+
+    return sharpened;
+  }
+
   // Extract pixel colors from an image with high-quality resampling
   extractPixelColors(img, width, height) {
     // Prefer gamma-correct supersampled rasterization for best palette matching.
     // This avoids subtle hue shifts that come from naive sRGB downscaling.
+    let pixels;
     try {
-      return this.rasterizeImage(img, width, height);
+      pixels = this.rasterizeImage(img, width, height);
     } catch {
       // Fallback to canvas downscale if something goes wrong.
       const canvas = this.resizeImageHighQuality(img, width, height);
       const ctx = canvas.getContext('2d');
 
       const imageData = ctx.getImageData(0, 0, width, height);
-      const pixels = [];
+      pixels = [];
 
       for (let y = 0; y < height; y++) {
         const row = [];
@@ -526,9 +683,67 @@ class PixelArtConverter {
         }
         pixels.push(row);
       }
-
-      return pixels;
     }
+
+    // Apply optional sharpening filter
+    const sharpeningStrength = Math.max(0, Math.min(2, (this.options.sharpeningStrength ?? 0) / 100));
+    if (sharpeningStrength > 0) {
+      pixels = this.applySharpeningFilter(pixels, width, height, sharpeningStrength);
+    }
+
+    return pixels;
+  }
+
+  // Compute local variance for adaptive dithering strength
+  computeLocalVariance(pixels, w, h) {
+    const variance = Array.from({ length: h }, () => Array(w).fill(0));
+    const radius = 1; // Use 3x3 neighborhood
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sumR = 0, sumG = 0, sumB = 0;
+        let count = 0;
+
+        // Calculate mean in neighborhood
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const ny = y + dy;
+            const nx = x + dx;
+            if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+              const p = pixels[ny][nx];
+              sumR += p.r;
+              sumG += p.g;
+              sumB += p.b;
+              count++;
+            }
+          }
+        }
+
+        const meanR = sumR / count;
+        const meanG = sumG / count;
+        const meanB = sumB / count;
+
+        // Calculate variance
+        let varR = 0, varG = 0, varB = 0;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const ny = y + dy;
+            const nx = x + dx;
+            if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+              const p = pixels[ny][nx];
+              varR += (p.r - meanR) ** 2;
+              varG += (p.g - meanG) ** 2;
+              varB += (p.b - meanB) ** 2;
+            }
+          }
+        }
+
+        // Normalize variance to 0-1 range
+        variance[y][x] = Math.sqrt((varR + varG + varB) / (count * 3)) / 255;
+      }
+    }
+
+    return variance;
   }
 
   // Adjust dimensions to fit within character budget
@@ -591,11 +806,17 @@ class PixelArtConverter {
 
     // Optional Floyd–Steinberg dithering in linear space to improve perceived quality.
     const useDithering = Boolean(this.options.dithering);
-    const ditherStrength = Math.max(0, Math.min(1, (this.options.ditheringStrength ?? 85) / 100));
+    const baseDitherStrength = Math.max(0, Math.min(1, (this.options.ditheringStrength ?? 85) / 100));
+    const adaptiveDithering = this.options.adaptiveDithering ?? true;
     const w = dimensions.width;
     const h = dimensions.height;
     const error = useDithering
       ? Array.from({ length: h }, () => Array.from({ length: w }, () => ({ r: 0, g: 0, b: 0 })))
+      : null;
+
+    // Precompute local variance for adaptive dithering
+    const localVariance = useDithering && adaptiveDithering
+      ? this.computeLocalVariance(pixels, w, h)
       : null;
     
     for (let y = 0; y < h; y++) {
@@ -623,6 +844,14 @@ class PixelArtConverter {
 
           const chosenLin = emoji?._lin || (emoji?.color ? this.rgb8ToLinear(emoji.color) : null);
           if (emoji && chosenLin) {
+            // Adaptive dithering: reduce strength in high-detail areas, increase in smooth areas
+            let ditherStrength = baseDitherStrength;
+            if (localVariance) {
+              const variance = localVariance[y][x];
+              // High variance (edges) = less dithering, low variance (smooth) = more dithering
+              ditherStrength *= (1.0 - variance * 0.5);
+            }
+
             const err = {
               r: (targetLin.r - chosenLin.r) * ditherStrength,
               g: (targetLin.g - chosenLin.g) * ditherStrength,
