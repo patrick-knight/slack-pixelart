@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frogger Game</title>
+    <link rel="stylesheet" href="frogger.css">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1>🐸 FROGGER 🐸</h1>
+            <div class="stats">
+                <div class="stat">
+                    <span class="label">Score:</span>
+                    <span id="score">0</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Lives:</span>
+                    <span id="lives">3</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Level:</span>
+                    <span id="level">1</span>
+                </div>
+            </div>
+        </div>
+        
+        <canvas id="gameCanvas" width="400" height="560"></canvas>
+        
+        <div class="controls">
+            <div class="instructions">
+                <h3>How to Play:</h3>
+                <p>Use <strong>Arrow Keys</strong> or <strong>WASD</strong> to move the frog</p>
+                <p>🎯 Goal: Get your frog safely across the road and river to reach the lily pads at the top!</p>
+                <p>⚠️ Avoid cars on the road</p>
+                <p>🪵 Jump on logs and turtles in the river (don't fall in the water!)</p>
+            </div>
+            <div class="buttons">
+                <button id="startBtn" class="btn btn-primary">Start Game</button>
+                <button id="pauseBtn" class="btn btn-secondary" disabled>Pause</button>
+                <button id="restartBtn" class="btn btn-secondary">Restart</button>
+            </div>
+        </div>
+        
+        <div id="gameOverModal" class="modal">
+            <div class="modal-content">
+                <h2 id="gameOverTitle">Game Over!</h2>
+                <p id="gameOverMessage">Final Score: <span id="finalScore">0</span></p>
+                <button id="playAgainBtn" class="btn btn-primary">Play Again</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="frogger.js"></script>
+</body>
+</html>
