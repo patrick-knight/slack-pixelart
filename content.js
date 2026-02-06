@@ -61,8 +61,19 @@
   const COLOR_SAMPLER_VERSION = 4;
 
   // Send progress update to popup and persist to storage
+  let contextInvalidated = false;
+
+  function isContextInvalidated(error) {
+    return error && error.message && error.message.includes('Extension context invalidated');
+  }
+
   function sendProgressUpdate(phase, percent, details) {
-    chrome.storage.local.set({ extractionProgress: { phase, percent, details, inProgress: true } });
+    if (contextInvalidated) return;
+    try {
+      chrome.storage.local.set({ extractionProgress: { phase, percent, details, inProgress: true } });
+    } catch (e) {
+      if (isContextInvalidated(e)) { contextInvalidated = true; return; }
+    }
     chrome.runtime.sendMessage({
       action: 'extractionProgress',
       phase: phase,
@@ -75,7 +86,8 @@
 
   // Clear persisted progress state
   function clearExtractionProgress() {
-    chrome.storage.local.remove('extractionProgress');
+    if (contextInvalidated) return;
+    try { chrome.storage.local.remove('extractionProgress'); } catch (e) { /* context may be gone */ }
   }
 
   // Fetch with retry on 429 rate limit
@@ -187,6 +199,7 @@
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         } catch (pageError) {
+          if (isContextInvalidated(pageError)) { contextInvalidated = true; console.warn('Extension context invalidated, aborting extraction.'); break; }
           console.warn(`Error fetching page ${page}:`, pageError.message, '- continuing...');
         }
       }
@@ -600,6 +613,7 @@
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         } catch (pageError) {
+          if (isContextInvalidated(pageError)) { contextInvalidated = true; console.warn('Extension context invalidated, aborting delta extraction.'); break; }
           console.warn(`Error fetching delta page ${page}:`, pageError.message, '- continuing...');
         }
       }

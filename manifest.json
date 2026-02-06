@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Slack Pixel Art",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Create pixel art from Slack emojis",
   "permissions": [
     "activeTab",
