@@ -77,6 +77,39 @@ h1 {
   border-bottom: 1px solid #f0f0f0;
 }
 
+/* Collapsible card (details/summary) */
+.collapsible-card {
+  width: 100%;
+}
+
+.collapsible-header {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.collapsible-header::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-header h2 {
+  flex: 1;
+}
+
+.collapse-icon {
+  color: #999;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.collapsible-card[open] .collapse-icon {
+  transform: rotate(180deg);
+}
+
+.collapsible-card:not([open]) + .card-body {
+  display: none;
+}
+
 .step-badge {
   width: 28px;
   height: 28px;
