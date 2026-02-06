@@ -704,22 +704,35 @@
         });
 
       return true;
+    } else if (request.action === 'getEmojiCount') {
+      const emojiCountEl = document.querySelector('h4[data-qa="customize_emoji_count"]');
+      if (emojiCountEl) {
+        const parsed = parseInt(emojiCountEl.textContent.replace(/[^0-9]/g, ''), 10);
+        sendResponse({ totalCount: isNaN(parsed) ? null : parsed });
+      } else {
+        sendResponse({ totalCount: null });
+      }
+      return false;
     }
   });
 
   // Log extension loaded
   console.log('Slack Pixel Art extension loaded on emoji customization page');
 
-  // Detect emoji count from the page and notify the popup/background
-  try {
+  // Detect emoji count from the page and notify the popup/background.
+  // The element may not exist yet (Slack renders dynamically), so poll for it.
+  let countCheckAttempts = 0;
+  const countCheckInterval = setInterval(() => {
+    countCheckAttempts++;
     const emojiCountEl = document.querySelector('h4[data-qa="customize_emoji_count"]');
     if (emojiCountEl) {
+      clearInterval(countCheckInterval);
       const parsed = parseInt(emojiCountEl.textContent.replace(/[^0-9]/g, ''), 10);
       if (!isNaN(parsed)) {
         chrome.runtime.sendMessage({ action: 'emojiCountCheck', totalCount: parsed }).catch(() => {});
       }
+    } else if (countCheckAttempts >= 30) {
+      clearInterval(countCheckInterval);
     }
-  } catch (e) {
-    // Ignore errors (e.g., element not found, popup closed)
-  }
+  }, 1000);
 })();

@@ -560,46 +560,63 @@ function startDeletedScan() {
   }
 }
 
+// Handle an emoji count from the Slack page — trigger delta sync or show alert
+function handleEmojiCountCheck(totalCount) {
+  if (totalCount !== cachedEmojiCount && cachedEmojiCount > 0) {
+    if (autoSyncCheckbox.checked && lastExtractedAt) {
+      showExtractionProgress();
+      updateExtractionProgress('Syncing new emojis...', 10, 'Checking for new emojis...');
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs[0]) {
+          hideExtractionProgress();
+          return;
+        }
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'deltaExtractEmojis', lastSyncDate: lastExtractedAt }, (response) => {
+          if (chrome.runtime.lastError) {
+            hideExtractionProgress();
+            showStatus(emojiStatus, 'Sync error: ' + chrome.runtime.lastError.message, 'error');
+            return;
+          }
+          if (response && response.success && response.count > 0) {
+            currentEmojis = currentEmojis.concat(response.newEmojis);
+            cachedEmojiCount = currentEmojis.length;
+            const now = Date.now();
+            lastExtractedAt = now;
+            chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
+            updateCacheDisplay(currentEmojis);
+            updateCacheDateDisplay(now);
+            showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');
+          } else if (response && response.success) {
+            showStatus(emojiStatus, 'Cache is up to date', 'info');
+          }
+          hideExtractionProgress();
+          startDeletedScan();
+        });
+      });
+    } else {
+      showSyncAlert(totalCount, cachedEmojiCount);
+    }
+  }
+}
+
 // Listen for progress updates from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'extractionProgress') {
     updateExtractionProgress(request.phase, request.percent, request.details);
   } else if (request.action === 'emojiCountCheck') {
-    if (request.totalCount !== cachedEmojiCount && cachedEmojiCount > 0) {
-      if (autoSyncCheckbox.checked && lastExtractedAt) {
-        showExtractionProgress();
-        updateExtractionProgress('Syncing new emojis...', 10, 'Checking for new emojis...');
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (!tabs[0]) {
-            hideExtractionProgress();
-            return;
-          }
-          chrome.tabs.sendMessage(tabs[0].id, { action: 'deltaExtractEmojis', lastSyncDate: lastExtractedAt }, (response) => {
-            if (chrome.runtime.lastError) {
-              hideExtractionProgress();
-              showStatus(emojiStatus, 'Sync error: ' + chrome.runtime.lastError.message, 'error');
-              return;
-            }
-            if (response && response.success && response.count > 0) {
-              currentEmojis = currentEmojis.concat(response.newEmojis);
-              cachedEmojiCount = currentEmojis.length;
-              const now = Date.now();
-              lastExtractedAt = now;
-              chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
-              updateCacheDisplay(currentEmojis);
-              updateCacheDateDisplay(now);
-              showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');
-            } else if (response && response.success) {
-              showStatus(emojiStatus, 'Cache is up to date', 'info');
-            }
-            hideExtractionProgress();
-            startDeletedScan();
-          });
-        });
-      } else {
-        showSyncAlert(request.totalCount, cachedEmojiCount);
+    handleEmojiCountCheck(request.totalCount);
+  }
+});
+
+// On popup open, proactively ask the content script for the emoji count
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  if (tabs[0] && tabs[0].url && tabs[0].url.includes('slack.com/customize/emoji')) {
+    chrome.tabs.sendMessage(tabs[0].id, { action: 'getEmojiCount' }, (response) => {
+      if (chrome.runtime.lastError || !response) return;
+      if (response.totalCount) {
+        handleEmojiCountCheck(response.totalCount);
       }
-    }
+    });
   }
 });
 
