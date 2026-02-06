@@ -3,23 +3,17 @@
 (function() {
   'use strict';
   
-  // Constants
-  const TRANSPARENCY_THRESHOLD = 128; // Alpha value threshold for considering pixels as opaque
-  const PIXEL_SAMPLE_STEP = 16; // Sample every 4th pixel (4 RGBA values per pixel)
-
   // Function to get Slack API token from the page
   function getSlackApiToken() {
     // Try multiple methods to get the API token
     
     // Method 1: From boot_data (most reliable)
     if (typeof boot_data !== 'undefined' && boot_data.api_token) {
-      console.log('Found API token from boot_data');
       return boot_data.api_token;
     }
     
     // Method 2: From window object variations
     if (window.boot_data && window.boot_data.api_token) {
-      console.log('Found API token from window.boot_data');
       return window.boot_data.api_token;
     }
     
@@ -38,7 +32,6 @@
       for (const pattern of patterns) {
         const match = content.match(pattern);
         if (match) {
-          console.log('Found API token from script tag');
           return match[1];
         }
       }
@@ -51,13 +44,12 @@
         const parsed = JSON.parse(localTeamData);
         for (const key of Object.keys(parsed)) {
           if (parsed[key]?.token) {
-            console.log('Found API token from localStorage');
             return parsed[key].token;
           }
         }
       }
     } catch (e) {
-      console.log('Error reading localStorage:', e);
+      // localStorage read failed; continue to return null
     }
     
     return null;

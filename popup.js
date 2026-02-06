@@ -8,6 +8,15 @@ let currentEmojis = [];
 let currentResult = null;
 let cachedEmojiCount = 0;
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // DOM elements
 const extractEmojisBtn = document.getElementById('extractEmojis');
 const extractBtnText = document.getElementById('extractBtnText');
@@ -456,7 +465,11 @@ loadFromUrlBtn.addEventListener('click', () => {
   
   // Validate URL
   try {
-    new URL(url);
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      showStatus(imageStatus, 'Only http and https URLs are allowed', 'error');
+      return;
+    }
   } catch (e) {
     showStatus(imageStatus, 'Invalid URL format', 'error');
     return;
@@ -614,7 +627,7 @@ function displayResult(result) {
     <div><strong>Character Count:</strong> ${result.stats.characterCount.toLocaleString()}</div>
     <div><strong>Emoji Diversity:</strong> ${((result.stats.uniqueEmojis / result.stats.totalEmojis) * 100).toFixed(1)}%</div>
     <div><strong>Top 5 Emojis:</strong></div>
-    ${result.stats.topEmojis.map(e => `<div style="margin-left: 20px;">:${e.name}: (${e.count}×)</div>`).join('')}
+    ${result.stats.topEmojis.map(e => `<div style="margin-left: 20px;">:${escapeHtml(e.name)}: (${e.count}×)</div>`).join('')}
   `;
   stats.innerHTML = statsHtml;
 }

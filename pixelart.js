@@ -314,6 +314,11 @@ class PixelArtConverter {
       img.onerror = () => reject(new Error('Failed to load image'));
       
       if (isUrl) {
+        const parsedUrl = new URL(source);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          reject(new Error('Only http and https URLs are allowed'));
+          return;
+        }
         img.crossOrigin = 'Anonymous';
         img.src = source;
       } else {
