@@ -829,6 +829,26 @@ imageFileInput.addEventListener('change', (e) => {
   checkReadyToGenerate();
 });
 
+// Paste image from clipboard
+document.addEventListener('paste', (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) {
+        currentImageSource = file;
+        currentImageIsUrl = false;
+        showStatus(imageStatus, `Pasted image (${file.type})`, 'success');
+        analyzeAndAutoConfig(file, false);
+        checkReadyToGenerate();
+      }
+      return;
+    }
+  }
+});
+
 // Generate pixel art
 generateBtn.addEventListener('click', async () => {
   generateBtn.disabled = true;

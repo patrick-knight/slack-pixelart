@@ -271,6 +271,25 @@ input[type="range"]::-moz-range-thumb {
   color: #667eea;
 }
 
+.paste-zone {
+  text-align: center;
+  padding: 10px;
+  margin-top: 8px;
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  color: #9ca3af;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.paste-zone:hover,
+.paste-zone.active {
+  border-color: #667eea;
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.05);
+}
+
 .divider {
   text-align: center;
   margin: 16px 0;
