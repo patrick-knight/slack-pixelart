@@ -51,7 +51,89 @@ function computeFromImageData(imageData) {
     ? { r: Math.round(ar / accentCount), g: Math.round(ag / accentCount), b: Math.round(ab / accentCount) }
     : avg;
 
-  return { color: avg, accentColor: accent, variance };
+  return { color: avg, accentColor: accent, variance, colorProfile: colorProfileFromPixels(data, n) };
+}
+
+// Lightweight k-means (k=3) to extract dominant colors from sampled pixels
+function colorProfileFromPixels(data, n) {
+  if (n === 0) return [];
+
+  // Collect pixels as [r,g,b] arrays
+  const pixels = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const off = i * 4;
+    pixels[i] = [data[off], data[off + 1], data[off + 2]];
+  }
+
+  // Maximin initialization: pick first pixel, then furthest from existing centroids
+  const k = 3;
+  const centroids = [pixels[0].slice()];
+  for (let c = 1; c < k; c++) {
+    let bestIdx = 0, bestDist = -1;
+    for (let i = 0; i < n; i++) {
+      let minD = Infinity;
+      for (const cent of centroids) {
+        const dr = pixels[i][0] - cent[0], dg = pixels[i][1] - cent[1], db = pixels[i][2] - cent[2];
+        minD = Math.min(minD, dr * dr + dg * dg + db * db);
+      }
+      if (minD > bestDist) { bestDist = minD; bestIdx = i; }
+    }
+    centroids.push(pixels[bestIdx].slice());
+  }
+
+  const assignments = new Uint8Array(n);
+  for (let iter = 0; iter < 12; iter++) {
+    let changed = false;
+    for (let i = 0; i < n; i++) {
+      let bestC = 0, bestD = Infinity;
+      for (let c = 0; c < k; c++) {
+        const dr = pixels[i][0] - centroids[c][0], dg = pixels[i][1] - centroids[c][1], db = pixels[i][2] - centroids[c][2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; bestC = c; }
+      }
+      if (assignments[i] !== bestC) { assignments[i] = bestC; changed = true; }
+    }
+    if (!changed) break;
+    for (let c = 0; c < k; c++) {
+      let sr = 0, sg = 0, sb = 0, cnt = 0;
+      for (let i = 0; i < n; i++) {
+        if (assignments[i] === c) { sr += pixels[i][0]; sg += pixels[i][1]; sb += pixels[i][2]; cnt++; }
+      }
+      if (cnt > 0) centroids[c] = [Math.round(sr / cnt), Math.round(sg / cnt), Math.round(sb / cnt)];
+    }
+  }
+
+  // Build profile and merge clusters closer than ~30 per channel
+  const counts = new Array(k).fill(0);
+  for (let i = 0; i < n; i++) counts[assignments[i]]++;
+  let profile = [];
+  for (let c = 0; c < k; c++) {
+    if (counts[c] > 0) {
+      profile.push({ rgb: { r: centroids[c][0], g: centroids[c][1], b: centroids[c][2] }, weight: counts[c] / n });
+    }
+  }
+  let didMerge = true;
+  while (didMerge) {
+    didMerge = false;
+    for (let i = 0; i < profile.length && !didMerge; i++) {
+      for (let j = i + 1; j < profile.length && !didMerge; j++) {
+        const dr = profile[i].rgb.r - profile[j].rgb.r, dg = profile[i].rgb.g - profile[j].rgb.g, db = profile[i].rgb.b - profile[j].rgb.b;
+        if (dr * dr + dg * dg + db * db < 900) {
+          const w = profile[i].weight + profile[j].weight;
+          profile[i].rgb = {
+            r: Math.round((profile[i].rgb.r * profile[i].weight + profile[j].rgb.r * profile[j].weight) / w),
+            g: Math.round((profile[i].rgb.g * profile[i].weight + profile[j].rgb.g * profile[j].weight) / w),
+            b: Math.round((profile[i].rgb.b * profile[i].weight + profile[j].rgb.b * profile[j].weight) / w)
+          };
+          profile[i].weight = w;
+          profile.splice(j, 1);
+          didMerge = true;
+        }
+      }
+    }
+  }
+  profile.sort((a, b) => b.weight - a.weight);
+  return profile;
 }
 
 async function sampleEmojiColor(url) {

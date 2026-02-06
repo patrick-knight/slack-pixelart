@@ -24,6 +24,7 @@ class PixelArtConverter {
       // Higher values = better color fidelity (and better matching), at modest CPU cost.
       rasterSamples: options.rasterSamples ?? 3,
       rasterMaxSourceSide: options.rasterMaxSourceSide ?? 2048,
+      colorMetric: options.colorMetric || 'oklab',
       ...options
     };
     this.usedEmojis = new Map(); // Track emoji usage
@@ -109,6 +110,34 @@ class PixelArtConverter {
     return Math.sqrt(dL * dL + da * da + db * db + Math.max(0, dH2) * 0.25);
   }
 
+  oklabDistanceCalibrated(lab1, lab2) {
+    // Calibrated OKLab delta with LCh decomposition and Helmholtz-Kohlrausch compensation
+    const C1 = Math.sqrt(lab1.a * lab1.a + lab1.b * lab1.b);
+    const C2 = Math.sqrt(lab2.a * lab2.a + lab2.b * lab2.b);
+
+    // HK lightness adjustment for high-chroma colors
+    let L1 = lab1.L, L2 = lab2.L;
+    if (C1 > 0.1) {
+      const hue1 = Math.atan2(lab1.b, lab1.a);
+      const hkFactor1 = 0.12 + 0.06 * Math.cos(hue1 + 0.8);
+      L1 = lab1.L + 0.015 * C1 * hkFactor1;
+    }
+    if (C2 > 0.1) {
+      const hue2 = Math.atan2(lab2.b, lab2.a);
+      const hkFactor2 = 0.12 + 0.06 * Math.cos(hue2 + 0.8);
+      L2 = lab2.L + 0.015 * C2 * hkFactor2;
+    }
+
+    const dL = L1 - L2;
+    const dC = C1 - C2;
+    const da = lab1.a - lab2.a;
+    const db = lab1.b - lab2.b;
+    const dH2 = Math.max(0, da * da + db * db - dC * dC);
+
+    const wL = 1.0, wC = 1.0, wH = 0.5;
+    return Math.sqrt(wL * dL * dL + wC * dC * dC + wH * dH2);
+  }
+
   clamp01(v) {
     return v < 0 ? 0 : v > 1 ? 1 : v;
   }
@@ -135,6 +164,14 @@ class PixelArtConverter {
         emoji._labAccent = this.linearToOklab(linAccent);
       }
 
+      // Precompute OKLab for multi-region color profile
+      if (Array.isArray(emoji.colorProfile) && emoji.colorProfile.length > 0 && !emoji._labProfile) {
+        emoji._labProfile = emoji.colorProfile.map(entry => ({
+          lab: this.linearToOklab(this.rgb8ToLinear(entry.rgb)),
+          weight: entry.weight
+        }));
+      }
+
       if (typeof emoji.variance !== 'number') {
         emoji.variance = 999;
       }
@@ -147,16 +184,19 @@ class PixelArtConverter {
       return null; // Not worth the overhead for small sets
     }
     
-    // Bucket emojis by quantized color (reduce color space to 32×32×32)
-    const bucketSize = 8; // 256/8 = 32 buckets per channel
+    // Bucket emojis by quantized OKLab coordinates
+    const binL = 0.05;  // L range ~0–1, ~20 bins
+    const binA = 0.04;  // a range ~-0.4–0.4, ~20 bins
+    const binB = 0.04;  // b range ~-0.4–0.4, ~20 bins
     const index = new Map();
 
     const pushToBucket = (emoji, rgb) => {
       if (!emoji || !rgb) return;
-      const bucketR = Math.floor(rgb.r / bucketSize);
-      const bucketG = Math.floor(rgb.g / bucketSize);
-      const bucketB = Math.floor(rgb.b / bucketSize);
-      const key = `${bucketR},${bucketG},${bucketB}`;
+      const lab = this.linearToOklab(this.rgb8ToLinear(rgb));
+      const kL = Math.floor(lab.L / binL);
+      const kA = Math.floor(lab.a / binA);
+      const kB = Math.floor(lab.b / binB);
+      const key = `${kL},${kA},${kB}`;
 
       if (!index.has(key)) {
         index.set(key, []);
@@ -175,9 +215,14 @@ class PixelArtConverter {
       if (emoji.accentColor) {
         pushToBucket(emoji, emoji.accentColor);
       }
+      if (Array.isArray(emoji.colorProfile)) {
+        for (const entry of emoji.colorProfile) {
+          pushToBucket(emoji, entry.rgb);
+        }
+      }
     }
     
-    return { colorIndex: index, bucketSize };
+    return { colorIndex: index, binL, binA, binB };
   }
 
   // Get candidate emojis from nearby color buckets
@@ -186,18 +231,19 @@ class PixelArtConverter {
       return this.emojis; // Return all emojis for small sets
     }
     
-    const { colorIndex, bucketSize } = this.colorIndex;
-    const bucketR = Math.floor(targetColor.r / bucketSize);
-    const bucketG = Math.floor(targetColor.g / bucketSize);
-    const bucketB = Math.floor(targetColor.b / bucketSize);
+    const { colorIndex, binL, binA, binB } = this.colorIndex;
+    const lab = this.linearToOklab(this.rgb8ToLinear(targetColor));
+    const kL = Math.floor(lab.L / binL);
+    const kA = Math.floor(lab.a / binA);
+    const kB = Math.floor(lab.b / binB);
     
     const candidates = [];
 
     const collect = (radius) => {
-      for (let dr = -radius; dr <= radius; dr++) {
-        for (let dg = -radius; dg <= radius; dg++) {
+      for (let dL = -radius; dL <= radius; dL++) {
+        for (let da = -radius; da <= radius; da++) {
           for (let db = -radius; db <= radius; db++) {
-            const key = `${bucketR + dr},${bucketG + dg},${bucketB + db}`;
+            const key = `${kL + dL},${kA + da},${kB + db}`;
             if (colorIndex.has(key)) {
               candidates.push(...colorIndex.get(key));
             }
@@ -209,7 +255,7 @@ class PixelArtConverter {
     // Start with current + adjacent buckets (27 buckets)
     collect(1);
 
-    // If candidate set is too small, widen the net (helps OKLab matching)
+    // If candidate set is too small, widen the net
     if (candidates.length < 200) {
       collect(2);
     }
@@ -248,14 +294,31 @@ class PixelArtConverter {
     let bestAllowed = null;
     let bestAllowedDist = Infinity;
 
+    const useHK = this.options.colorMetric === 'oklab-hk';
+    const distFn = useHK
+      ? (a, b) => this.oklabDistanceCalibrated(a, b)
+      : (a, b) => this.oklabDistance(a, b);
+
     for (const emoji of candidates) {
       if (!emoji || !emoji.color) continue;
-      const emojiLab = emoji._lab || this.linearToOklab(this.rgb8ToLinear(emoji.color));
-      let dist = this.oklabDistance(targetLab, emojiLab);
 
-      if (emoji._labAccent) {
-        const distAccent = this.oklabDistance(targetLab, emoji._labAccent);
-        dist = Math.min(dist, distAccent * accentBias);
+      let dist;
+      if (emoji._labProfile) {
+        // Multi-region profile: weighted minimum distance
+        dist = Infinity;
+        for (const entry of emoji._labProfile) {
+          const d = entry.weight * distFn(targetLab, entry.lab);
+          if (d < dist) dist = d;
+        }
+      } else {
+        // Fallback: single mean + optional accent
+        const emojiLab = emoji._lab || this.linearToOklab(this.rgb8ToLinear(emoji.color));
+        dist = distFn(targetLab, emojiLab);
+
+        if (emoji._labAccent) {
+          const distAccent = distFn(targetLab, emoji._labAccent);
+          dist = Math.min(dist, distAccent * accentBias);
+        }
       }
 
       // If we couldn't read the emoji pixels during extraction (CORS/taint), its color is a fallback.
@@ -608,15 +671,31 @@ class PixelArtConverter {
   applySharpeningFilter(pixels, width, height, strength = 0.5) {
     if (strength <= 0) return pixels;
 
+    // Convert sRGB 0-255 to linear 0-1 for gamma-correct filtering
+    const linear = [];
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) {
+        const p = pixels[y][x];
+        row.push({
+          r: this.srgb8ToLinear01(p.r),
+          g: this.srgb8ToLinear01(p.g),
+          b: this.srgb8ToLinear01(p.b),
+          a: p.a
+        });
+      }
+      linear.push(row);
+    }
+
     const sharpened = [];
     const radius = 1;
 
     for (let y = 0; y < height; y++) {
       const row = [];
       for (let x = 0; x < width; x++) {
-        const center = pixels[y][x];
+        const center = linear[y][x];
 
-        // Calculate Gaussian blur (approximate with simple average)
+        // Calculate Gaussian blur (approximate with simple average) in linear space
         let blurR = 0, blurG = 0, blurB = 0;
         let count = 0;
 
@@ -624,7 +703,7 @@ class PixelArtConverter {
           for (let dx = -radius; dx <= radius; dx++) {
             const ny = Math.max(0, Math.min(height - 1, y + dy));
             const nx = Math.max(0, Math.min(width - 1, x + dx));
-            const p = pixels[ny][nx];
+            const p = linear[ny][nx];
             blurR += p.r;
             blurG += p.g;
             blurB += p.b;
@@ -636,11 +715,15 @@ class PixelArtConverter {
         blurG /= count;
         blurB /= count;
 
-        // Unsharp mask: sharp = original + strength * (original - blur)
+        // Unsharp mask in linear space, then convert back to sRGB 8-bit
+        const sharpenedR = center.r + strength * (center.r - blurR);
+        const sharpenedG = center.g + strength * (center.g - blurG);
+        const sharpenedB = center.b + strength * (center.b - blurB);
+
         row.push({
-          r: Math.max(0, Math.min(255, Math.round(center.r + strength * (center.r - blurR)))),
-          g: Math.max(0, Math.min(255, Math.round(center.g + strength * (center.g - blurG)))),
-          b: Math.max(0, Math.min(255, Math.round(center.b + strength * (center.b - blurB)))),
+          r: Math.max(0, Math.min(255, this.linear01ToSrgb8(sharpenedR))),
+          g: Math.max(0, Math.min(255, this.linear01ToSrgb8(sharpenedG))),
+          b: Math.max(0, Math.min(255, this.linear01ToSrgb8(sharpenedB))),
           a: center.a
         });
       }
@@ -701,8 +784,8 @@ class PixelArtConverter {
 
   // Compute local variance for adaptive dithering strength
   computeLocalVariance(pixels, w, h) {
-    const variance = Array.from({ length: h }, () => Array(w).fill(0));
-    const radius = 1; // Use 3x3 neighborhood
+    const result = Array.from({ length: h }, () => Array(w).fill(null));
+    const radius = 2; // Use 5x5 neighborhood for more stable estimates
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -744,11 +827,27 @@ class PixelArtConverter {
         }
 
         // Normalize variance to 0-1 range
-        variance[y][x] = Math.sqrt((varR + varG + varB) / (count * 3)) / 255;
+        const variance = Math.sqrt((varR + varG + varB) / (count * 3)) / 255;
+
+        // Compute gradient as max absolute difference between opposing edges
+        const lx = Math.max(0, x - 1), rx = Math.min(w - 1, x + 1);
+        const ty = Math.max(0, y - 1), by = Math.min(h - 1, y + 1);
+        const pL = pixels[y][lx], pR = pixels[y][rx];
+        const pT = pixels[ty][x], pB = pixels[by][x];
+        const avgLeft = (pL.r + pL.g + pL.b) / 3;
+        const avgRight = (pR.r + pR.g + pR.b) / 3;
+        const avgTop = (pT.r + pT.g + pT.b) / 3;
+        const avgBottom = (pB.r + pB.g + pB.b) / 3;
+        const gradient = Math.max(
+          Math.abs(avgRight - avgLeft),
+          Math.abs(avgBottom - avgTop)
+        ) / 255;
+
+        result[y][x] = { variance, gradient };
       }
     }
 
-    return variance;
+    return result;
   }
 
   // Adjust dimensions to fit within character budget
@@ -849,12 +948,18 @@ class PixelArtConverter {
 
           const chosenLin = emoji?._lin || (emoji?.color ? this.rgb8ToLinear(emoji.color) : null);
           if (emoji && chosenLin) {
-            // Adaptive dithering: reduce strength in high-detail areas, increase in smooth areas
+            // Adaptive dithering: sigmoid attenuation for edges, boost for smooth gradients
             let ditherStrength = baseDitherStrength;
             if (localVariance) {
-              const variance = localVariance[y][x];
-              // High variance (edges) = less dithering, low variance (smooth) = more dithering
-              ditherStrength *= (1.0 - variance * 0.5);
+              const { variance, gradient } = localVariance[y][x];
+              // Sigmoid attenuation: sharp rolloff near threshold preserves detail
+              const k = 10;
+              const threshold = 0.15;
+              ditherStrength *= 1.0 / (1.0 + Math.exp(k * (variance - threshold)));
+              // Boost dither on smooth ramps (high gradient, low variance) by up to 20%
+              if (gradient > 0.05 && variance < threshold) {
+                ditherStrength *= 1.0 + 0.2 * (gradient / 0.5);
+              }
             }
 
             const err = {

@@ -71,6 +71,8 @@ const textTabBtn = document.getElementById('textTabBtn');
 let currentImageSource = null;
 let currentImageIsUrl = true;
 let currentGrid = null; // Store the grid for visual preview
+let referenceImageUrl = null;
+let comparisonMode = 'side-by-side';
 
 // Format date for display
 function formatDate(timestamp) {
@@ -163,6 +165,9 @@ textTabBtn.addEventListener('click', () => {
 function renderVisualPreview(grid, emojiSize = 16) {
   visualPreview.innerHTML = '';
   
+  const cols = grid[0] ? grid[0].length : 0;
+  const rows = grid.length;
+  
   // Add zoom controls
   const zoomControls = document.createElement('div');
   zoomControls.className = 'zoom-controls';
@@ -172,6 +177,51 @@ function renderVisualPreview(grid, emojiSize = 16) {
     <span class="zoom-value" id="zoomValue">${emojiSize}px</span>
   `;
   visualPreview.appendChild(zoomControls);
+  
+  // Comparison container wraps reference + mosaic
+  const comparisonContainer = document.createElement('div');
+  comparisonContainer.id = 'comparisonContainer';
+  comparisonContainer.className = comparisonMode === 'overlay' ? 'comparison-container overlay' : 'comparison-container';
+  
+  // Reference pane
+  if (referenceImageUrl) {
+    const refPane = document.createElement('div');
+    refPane.className = comparisonMode === 'overlay' ? 'comparison-pane overlay-pane' : 'comparison-pane';
+    refPane.id = 'referencePane';
+    
+    const refLabel = document.createElement('div');
+    refLabel.className = 'comparison-pane-label';
+    refLabel.textContent = 'Reference';
+    refPane.appendChild(refLabel);
+    
+    const refImg = document.createElement('img');
+    refImg.className = 'reference-img';
+    refImg.src = referenceImageUrl;
+    refImg.alt = 'Reference image';
+    refImg.style.width = `${cols * emojiSize}px`;
+    refImg.style.height = `${rows * emojiSize}px`;
+    refImg.id = 'referenceImage';
+    refPane.appendChild(refImg);
+    
+    if (comparisonMode === 'overlay') {
+      const opacitySlider = document.getElementById('overlayOpacity');
+      refPane.style.opacity = (opacitySlider ? opacitySlider.value : 50) / 100;
+      refPane.style.pointerEvents = 'none';
+    }
+    
+    comparisonContainer.appendChild(refPane);
+  }
+  
+  // Mosaic pane
+  const mosaicPane = document.createElement('div');
+  mosaicPane.className = 'comparison-pane';
+  
+  if (referenceImageUrl) {
+    const mosaicLabel = document.createElement('div');
+    mosaicLabel.className = 'comparison-pane-label';
+    mosaicLabel.textContent = 'Mosaic';
+    mosaicPane.appendChild(mosaicLabel);
+  }
   
   // Container for the emoji grid
   const gridContainer = document.createElement('div');
@@ -201,7 +251,7 @@ function renderVisualPreview(grid, emojiSize = 16) {
         img.title = `:${emoji.name}:`;
         img.style.width = `${emojiSize}px`;
         img.style.height = `${emojiSize}px`;
-        img.loading = 'lazy'; // Lazy load for performance
+        img.loading = 'lazy';
         cell.appendChild(img);
       }
       
@@ -211,7 +261,9 @@ function renderVisualPreview(grid, emojiSize = 16) {
     gridContainer.appendChild(rowDiv);
   }
   
-  visualPreview.appendChild(gridContainer);
+  mosaicPane.appendChild(gridContainer);
+  comparisonContainer.appendChild(mosaicPane);
+  visualPreview.appendChild(comparisonContainer);
   
   // Add zoom slider functionality
   const zoomSlider = document.getElementById('zoomSlider');
@@ -232,6 +284,13 @@ function renderVisualPreview(grid, emojiSize = 16) {
         img.style.height = `${newSize}px`;
       }
     });
+    
+    // Update reference image size to match
+    const refImg = document.getElementById('referenceImage');
+    if (refImg) {
+      refImg.style.width = `${cols * newSize}px`;
+      refImg.style.height = `${rows * newSize}px`;
+    }
   });
 }
 
@@ -602,6 +661,20 @@ function displayResult(result) {
   // Store the grid for visual preview
   currentGrid = result.grid;
   
+  // Build reference image URL
+  if (currentImageIsUrl) {
+    referenceImageUrl = currentImageSource;
+  } else if (currentImageSource) {
+    if (referenceImageUrl && referenceImageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(referenceImageUrl);
+    }
+    referenceImageUrl = URL.createObjectURL(currentImageSource);
+  }
+  
+  // Show comparison controls
+  const comparisonControls = document.getElementById('comparisonControls');
+  comparisonControls.style.display = referenceImageUrl ? 'flex' : 'none';
+  
   // Render visual preview (emoji images)
   renderVisualPreview(result.grid);
   
@@ -631,3 +704,27 @@ function displayResult(result) {
   `;
   stats.innerHTML = statsHtml;
 }
+
+// Comparison mode handlers
+document.getElementById('sideBySideBtn').addEventListener('click', () => {
+  comparisonMode = 'side-by-side';
+  document.getElementById('sideBySideBtn').classList.add('active');
+  document.getElementById('overlayBtn').classList.remove('active');
+  document.getElementById('overlayOpacity').style.display = 'none';
+  if (currentGrid) renderVisualPreview(currentGrid);
+});
+
+document.getElementById('overlayBtn').addEventListener('click', () => {
+  comparisonMode = 'overlay';
+  document.getElementById('overlayBtn').classList.add('active');
+  document.getElementById('sideBySideBtn').classList.remove('active');
+  document.getElementById('overlayOpacity').style.display = 'inline';
+  if (currentGrid) renderVisualPreview(currentGrid);
+});
+
+document.getElementById('overlayOpacity').addEventListener('input', (e) => {
+  const refPane = document.getElementById('referencePane');
+  if (refPane) {
+    refPane.style.opacity = e.target.value / 100;
+  }
+});

@@ -58,7 +58,7 @@
   // Track if extraction is in progress to prevent duplicate runs
   let extractionInProgress = false;
 
-  const COLOR_SAMPLER_VERSION = 3;
+  const COLOR_SAMPLER_VERSION = 4;
 
   // Send progress update to popup
   function sendProgressUpdate(phase, percent, details) {
@@ -370,6 +370,7 @@
           color: response.color || { r: 128, g: 128, b: 128 },
           accentColor: response.accentColor || response.color || { r: 128, g: 128, b: 128 },
           variance: typeof response.variance === 'number' ? response.variance : 999,
+          colorProfile: Array.isArray(response.colorProfile) ? response.colorProfile : undefined,
           colorError: Boolean(response.colorError)
         });
       });
@@ -410,13 +411,14 @@
               color: cached.color,
               accentColor: cached.accentColor || cached.color,
               variance: typeof cached.variance === 'number' ? cached.variance : 999,
+              colorProfile: Array.isArray(cached.colorProfile) ? cached.colorProfile : undefined,
               colorError: false
             };
           }
         }
 
-        const { color, accentColor, variance, colorError } = await getAverageColor(emoji.url);
-        return { ...emoji, color, accentColor, variance, colorError };
+        const { color, accentColor, variance, colorProfile, colorError } = await getAverageColor(emoji.url);
+        return { ...emoji, color, accentColor, variance, colorProfile, colorError };
       });
 
       results.push(...batchResults);
