@@ -718,18 +718,18 @@
             sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
             extractionInProgress = false;
             clearExtractionProgress();
-            sendResponse({ 
+            try { sendResponse({ 
               success: true, 
               count: emojisWithColors.length,
               emojis: emojisWithColors,
               method: extractionMethod
-            });
+            }); } catch (e) { /* popup closed */ }
           });
         })
         .catch(error => {
           extractionInProgress = false;
           clearExtractionProgress();
-          sendResponse({ success: false, error: error.message });
+          try { sendResponse({ success: false, error: error.message }); } catch (e) { /* popup closed */ }
         });
       
       return true; // Keep the message channel open for async response
@@ -753,7 +753,7 @@
             extractionInProgress = false;
             clearExtractionProgress();
             sendProgressUpdate('Complete!', 100, 'No new emojis found.');
-            sendResponse({ success: true, newEmojis: [], count: 0 });
+            try { sendResponse({ success: true, newEmojis: [], count: 0 }); } catch (e) { /* popup closed */ }
             return;
           }
 
@@ -763,15 +763,24 @@
             console.log(`Delta color batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
           });
 
+          // Merge new emojis into storage so results persist even if popup is closed
+          const cached = await chrome.storage.local.get(['slackEmojis']);
+          const existing = cached.slackEmojis || [];
+          const slimNew = emojisWithColors.map(e => ({
+            name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance
+          }));
+          const merged = existing.concat(slimNew);
+          await chrome.storage.local.set({ slackEmojis: merged, extractedAt: Date.now() });
+
           sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} new emojis ready!`);
           extractionInProgress = false;
           clearExtractionProgress();
-          sendResponse({ success: true, newEmojis: emojisWithColors, count: emojisWithColors.length });
+          try { sendResponse({ success: true, newEmojis: emojisWithColors, count: emojisWithColors.length }); } catch (e) { /* popup closed */ }
         })
         .catch(error => {
           extractionInProgress = false;
           clearExtractionProgress();
-          sendResponse({ success: false, error: error.message });
+          try { sendResponse({ success: false, error: error.message }); } catch (e) { /* popup closed */ }
         });
 
       return true;
