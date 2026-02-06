@@ -198,8 +198,19 @@ async function sampleEmojiColor(url) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request && request.action === 'sampleEmojiColors' && Array.isArray(request.urls)) {
-    Promise.all(request.urls.map(url => sampleEmojiColor(url)))
-      .then(results => sendResponse(results));
+    // Process in chunks of 20 to avoid overwhelming the service worker
+    (async () => {
+      const results = new Array(request.urls.length);
+      const chunkSize = 20;
+      for (let i = 0; i < request.urls.length; i += chunkSize) {
+        const chunk = request.urls.slice(i, i + chunkSize);
+        const chunkResults = await Promise.all(chunk.map(url => sampleEmojiColor(url)));
+        for (let j = 0; j < chunkResults.length; j++) {
+          results[i + j] = chunkResults[j];
+        }
+      }
+      sendResponse(results);
+    })();
     return true;
   }
 

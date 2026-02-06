@@ -670,6 +670,7 @@
           }
 
           // Build cache lookup for reuse (performance: avoid re-sampling unchanged emoji URLs)
+          sendProgressUpdate('Preparing...', 67, `Building cache index for ${emojis.length.toLocaleString()} emojis...`);
           const cachedByUrl = new Map();
           let cachedVersion = -1;
           try {
@@ -686,7 +687,8 @@
             // ignore
           }
           
-          sendProgressUpdate('Analyzing colors...', 70, `Starting color analysis for ${emojis.length.toLocaleString()} emojis...`);
+          console.log(`Cache index built: ${cachedByUrl.size} cached entries, version ${cachedVersion}`);
+          sendProgressUpdate('Analyzing colors...', 70, `Starting color analysis for ${emojis.length.toLocaleString()} emojis (${cachedByUrl.size.toLocaleString()} cached)...`);
           
           // Get colors for each emoji in batches
           return processEmojisInBatches(emojis, cachedByUrl, cachedVersion, forceResync, 200, (currentBatch, totalBatches, processedCount) => {
