@@ -60,8 +60,9 @@
 
   const COLOR_SAMPLER_VERSION = 4;
 
-  // Send progress update to popup
+  // Send progress update to popup and persist to storage
   function sendProgressUpdate(phase, percent, details) {
+    chrome.storage.local.set({ extractionProgress: { phase, percent, details, inProgress: true } });
     chrome.runtime.sendMessage({
       action: 'extractionProgress',
       phase: phase,
@@ -70,6 +71,11 @@
     }).catch(() => {
       // Popup might be closed, ignore error
     });
+  }
+
+  // Clear persisted progress state
+  function clearExtractionProgress() {
+    chrome.storage.local.remove('extractionProgress');
   }
 
   // Fetch with retry on 429 rate limit
@@ -711,6 +717,7 @@
             }
             sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
             extractionInProgress = false;
+            clearExtractionProgress();
             sendResponse({ 
               success: true, 
               count: emojisWithColors.length,
@@ -721,6 +728,7 @@
         })
         .catch(error => {
           extractionInProgress = false;
+          clearExtractionProgress();
           sendResponse({ success: false, error: error.message });
         });
       
@@ -743,6 +751,7 @@
 
           if (newEmojis.length === 0) {
             extractionInProgress = false;
+            clearExtractionProgress();
             sendProgressUpdate('Complete!', 100, 'No new emojis found.');
             sendResponse({ success: true, newEmojis: [], count: 0 });
             return;
@@ -756,10 +765,12 @@
 
           sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} new emojis ready!`);
           extractionInProgress = false;
+          clearExtractionProgress();
           sendResponse({ success: true, newEmojis: emojisWithColors, count: emojisWithColors.length });
         })
         .catch(error => {
           extractionInProgress = false;
+          clearExtractionProgress();
           sendResponse({ success: false, error: error.message });
         });
 

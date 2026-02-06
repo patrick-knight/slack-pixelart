@@ -344,7 +344,15 @@ sharpeningStrengthInput.addEventListener('input', (e) => {
 });
 
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength', 'emojiPageUrl'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength', 'emojiPageUrl', 'extractionProgress'], (result) => {
+  // Restore in-progress extraction progress bar
+  if (result.extractionProgress && result.extractionProgress.inProgress) {
+    const ep = result.extractionProgress;
+    showExtractionProgress();
+    updateExtractionProgress(ep.phase, ep.percent, ep.details);
+    extractEmojisBtn.disabled = true;
+  }
+
   if (result.emojiPageUrl) {
     emojiPageUrlInput.value = result.emojiPageUrl;
   }
@@ -637,6 +645,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     updateExtractionProgress(request.phase, request.percent, request.details);
   } else if (request.action === 'emojiCountCheck') {
     handleEmojiCountCheck(request.totalCount);
+  }
+});
+
+// Also listen for storage changes to pick up progress when popup reopens mid-extraction
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.extractionProgress) {
+    const ep = changes.extractionProgress.newValue;
+    if (ep && ep.inProgress) {
+      showExtractionProgress();
+      updateExtractionProgress(ep.phase, ep.percent, ep.details);
+      extractEmojisBtn.disabled = true;
+    } else {
+      hideExtractionProgress();
+      extractEmojisBtn.disabled = false;
+      // Reload emojis from cache since extraction just finished
+      chrome.storage.local.get(['slackEmojis', 'extractedAt'], (result) => {
+        if (result.slackEmojis && result.slackEmojis.length > 0) {
+          currentEmojis = result.slackEmojis;
+          cachedEmojiCount = result.slackEmojis.length;
+          lastExtractedAt = result.extractedAt;
+          showStatus(emojiStatus, `${currentEmojis.length.toLocaleString()} emojis synced`, 'success');
+          updateCacheDisplay(currentEmojis);
+          updateCacheDateDisplay(result.extractedAt);
+          checkReadyToGenerate();
+        }
+      });
+    }
   }
 });
 
