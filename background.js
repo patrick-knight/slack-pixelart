@@ -51,7 +51,7 @@ function computeFromImageData(imageData) {
     ? { r: Math.round(ar / accentCount), g: Math.round(ag / accentCount), b: Math.round(ab / accentCount) }
     : avg;
 
-  return { color: avg, accentColor: accent, variance, colorProfile: colorProfileFromPixels(data, n) };
+  return { color: avg, accentColor: accent, variance, colorProfile: colorProfileFromPixels(data, count) };
 }
 
 // Lightweight k-means (k=3) to extract dominant colors from sampled pixels

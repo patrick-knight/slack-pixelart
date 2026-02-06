@@ -165,11 +165,22 @@ class PixelArtConverter {
       }
 
       // Precompute OKLab for multi-region color profile
-      if (Array.isArray(emoji.colorProfile) && emoji.colorProfile.length > 0 && !emoji._labProfile) {
-        emoji._labProfile = emoji.colorProfile.map(entry => ({
-          lab: this.linearToOklab(this.rgb8ToLinear(entry.rgb)),
-          weight: entry.weight
-        }));
+      // Supports both full format (colorProfile: [{rgb, weight}]) and compact (cp: [[r,g,b,w%]])
+      const profile = emoji.colorProfile || emoji.cp;
+      if (Array.isArray(profile) && profile.length > 0 && !emoji._labProfile) {
+        emoji._labProfile = profile.map(entry => {
+          if (Array.isArray(entry)) {
+            // Compact format: [r, g, b, weight_percent]
+            return {
+              lab: this.linearToOklab(this.rgb8ToLinear({ r: entry[0], g: entry[1], b: entry[2] })),
+              weight: (entry[3] || 50) / 100
+            };
+          }
+          return {
+            lab: this.linearToOklab(this.rgb8ToLinear(entry.rgb)),
+            weight: entry.weight
+          };
+        });
       }
 
       if (typeof emoji.variance !== 'number') {
@@ -215,9 +226,11 @@ class PixelArtConverter {
       if (emoji.accentColor) {
         pushToBucket(emoji, emoji.accentColor);
       }
-      if (Array.isArray(emoji.colorProfile)) {
-        for (const entry of emoji.colorProfile) {
-          pushToBucket(emoji, entry.rgb);
+      const profile = emoji.colorProfile || emoji.cp;
+      if (Array.isArray(profile)) {
+        for (const entry of profile) {
+          const rgb = Array.isArray(entry) ? { r: entry[0], g: entry[1], b: entry[2] } : entry.rgb;
+          pushToBucket(emoji, rgb);
         }
       }
     }
@@ -304,10 +317,11 @@ class PixelArtConverter {
 
       let dist;
       if (emoji._labProfile) {
-        // Multi-region profile: weighted minimum distance
+        // Multi-region profile: pick the cluster closest to target color
+        // Weight bias: slightly favor matching the dominant cluster
         dist = Infinity;
         for (const entry of emoji._labProfile) {
-          const d = entry.weight * distFn(targetLab, entry.lab);
+          const d = distFn(targetLab, entry.lab) / (0.5 + entry.weight);
           if (d < dist) dist = d;
         }
       } else {

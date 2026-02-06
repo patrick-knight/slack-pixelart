@@ -5,13 +5,25 @@ const MAX_PREVIEW_LINES = 15; // Maximum lines to show in preview
 const STATUS_MESSAGE_TIMEOUT = 2000; // Time to show status messages (ms)
 
 function slimEmojisForStorage(emojis) {
-  return emojis.map(e => ({
-    name: e.name,
-    url: e.url,
-    color: e.color,
-    accentColor: e.accentColor,
-    variance: e.variance
-  }));
+  return emojis.map(e => {
+    const slim = {
+      name: e.name,
+      url: e.url,
+      color: e.color,
+      accentColor: e.accentColor,
+      variance: e.variance
+    };
+    // Store compact color profile (top 2 clusters as [r,g,b,weight%])
+    const cp = e.colorProfile || e.cp;
+    if (Array.isArray(cp) && cp.length > 0) {
+      slim.cp = cp.slice(0, 2).map(c => {
+        const rgb = c.rgb || c;
+        const w = c.weight != null ? Math.round(c.weight * 100) : (c[3] != null ? c[3] : 50);
+        return [rgb.r || rgb[0], rgb.g || rgb[1], rgb.b || rgb[2], w];
+      });
+    }
+    return slim;
+  });
 }
 
 let currentEmojis = [];

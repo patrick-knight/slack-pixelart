@@ -58,7 +58,7 @@
   // Track if extraction is in progress to prevent duplicate runs
   let extractionInProgress = false;
 
-  const COLOR_SAMPLER_VERSION = 4;
+  const COLOR_SAMPLER_VERSION = 5;
 
   // Send progress update to popup and persist to storage
   let contextInvalidated = false;
@@ -720,13 +720,13 @@
         .then(({ emojisWithColors, extractionMethod }) => {
           sendProgressUpdate('Saving...', 98, 'Caching emojis for offline use...');
           
-          const slimEmojis = emojisWithColors.map(e => ({
-            name: e.name,
-            url: e.url,
-            color: e.color,
-            accentColor: e.accentColor,
-            variance: e.variance
-          }));
+          const slimEmojis = emojisWithColors.map(e => {
+            const slim = { name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance };
+            if (Array.isArray(e.colorProfile) && e.colorProfile.length > 0) {
+              slim.cp = e.colorProfile.slice(0, 2).map(c => [c.rgb.r, c.rgb.g, c.rgb.b, Math.round(c.weight * 100)]);
+            }
+            return slim;
+          });
           
           try {
             chrome.storage.local.set({ 
@@ -794,9 +794,13 @@
           try {
             const cached = await chrome.storage.local.get(['slackEmojis']);
             const existing = cached.slackEmojis || [];
-            const slimNew = emojisWithColors.map(e => ({
-              name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance
-            }));
+            const slimNew = emojisWithColors.map(e => {
+              const slim = { name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance };
+              if (Array.isArray(e.colorProfile) && e.colorProfile.length > 0) {
+                slim.cp = e.colorProfile.slice(0, 2).map(c => [c.rgb.r, c.rgb.g, c.rgb.b, Math.round(c.weight * 100)]);
+              }
+              return slim;
+            });
             const merged = existing.concat(slimNew);
             await chrome.storage.local.set({ slackEmojis: merged, extractedAt: Date.now() });
           } catch (e) {
