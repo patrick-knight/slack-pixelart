@@ -23,7 +23,6 @@ const emojiPageUrlInput = document.getElementById('emojiPageUrl');
 const openEmojiPageBtn = document.getElementById('openEmojiPage');
 const extractEmojisBtn = document.getElementById('extractEmojis');
 const extractBtnText = document.getElementById('extractBtnText');
-const forceResyncBtn = document.getElementById('forceResync');
 const emojiStatus = document.getElementById('emojiStatus');
 const cacheInfo = document.getElementById('cacheInfo');
 const cacheCount = document.getElementById('cacheCount');
@@ -97,12 +96,8 @@ function updateCacheDisplay(emojiData) {
   if (emojiData && emojiData.length > 0) {
     cacheInfo.style.display = 'block';
     cacheCount.textContent = `${emojiData.length.toLocaleString()} emojis cached`;
-    forceResyncBtn.style.display = 'inline-flex';
-    extractBtnText.textContent = 'Update Cache';
   } else {
     cacheInfo.style.display = 'none';
-    forceResyncBtn.style.display = 'none';
-    extractBtnText.textContent = 'Extract Emojis';
   }
 }
 
@@ -462,12 +457,10 @@ sharpeningStrengthInput.addEventListener('change', () => {
 });
 
 // Extract emojis from current tab
-extractEmojisBtn.addEventListener('click', () => startExtraction(false));
-forceResyncBtn.addEventListener('click', () => startExtraction(true));
+extractEmojisBtn.addEventListener('click', () => startExtraction());
 
-async function startExtraction(forceResync) {
+async function startExtraction() {
   extractEmojisBtn.disabled = true;
-  forceResyncBtn.disabled = true;
   hideSyncAlert();
   showExtractionProgress();
   
@@ -478,55 +471,84 @@ async function startExtraction(forceResync) {
       hideExtractionProgress();
       showStatus(emojiStatus, 'Please navigate to your Slack emoji customization page first', 'error');
       extractEmojisBtn.disabled = false;
-      forceResyncBtn.disabled = false;
       return;
     }
     
     updateExtractionProgress('Connecting...', 5, 'Connecting to Slack page...');
     
-    chrome.tabs.sendMessage(tab.id, { action: 'extractEmojis', forceResync }, (response) => {
-      hideExtractionProgress();
-      
-      if (chrome.runtime.lastError) {
-        showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message + '. Try reloading the Slack page.', 'error');
+    // Delta sync if cache exists, full extraction otherwise
+    if (lastExtractedAt && currentEmojis.length > 0) {
+      chrome.tabs.sendMessage(tab.id, { action: 'deltaExtractEmojis', lastSyncDate: lastExtractedAt }, (response) => {
+        hideExtractionProgress();
+        
+        if (chrome.runtime.lastError) {
+          showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message + '. Try reloading the Slack page.', 'error');
+          extractEmojisBtn.disabled = false;
+          return;
+        }
+        
+        if (response && response.success && response.count > 0) {
+          currentEmojis = currentEmojis.concat(response.newEmojis);
+          cachedEmojiCount = currentEmojis.length;
+          const now = Date.now();
+          lastExtractedAt = now;
+          chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
+          updateCacheDisplay(currentEmojis);
+          updateCacheDateDisplay(now);
+          showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');
+          checkReadyToGenerate();
+        } else if (response && response.success) {
+          showStatus(emojiStatus, 'Cache is up to date', 'info');
+        } else if (response && response.inProgress) {
+          showStatus(emojiStatus, 'Extraction already in progress. Please wait.', 'info');
+        } else {
+          showStatus(emojiStatus, 'Error: ' + (response ? response.error : 'No response'), 'error');
+        }
+        
         extractEmojisBtn.disabled = false;
-        forceResyncBtn.disabled = false;
-        return;
-      }
-      
-      if (response.success) {
-        currentEmojis = response.emojis;
-        cachedEmojiCount = response.count;
-        const methodNote = response.method === 'api' ? ' (via Slack API)' : ' (via page scan)';
-        const fallbackColors = Array.isArray(response.emojis)
-          ? response.emojis.reduce((acc, e) => acc + (e && e.colorError ? 1 : 0), 0)
-          : 0;
+        startDeletedScan();
+      });
+    } else {
+      chrome.tabs.sendMessage(tab.id, { action: 'extractEmojis' }, (response) => {
+        hideExtractionProgress();
+        
+        if (chrome.runtime.lastError) {
+          showStatus(emojiStatus, 'Error: ' + chrome.runtime.lastError.message + '. Try reloading the Slack page.', 'error');
+          extractEmojisBtn.disabled = false;
+          return;
+        }
+        
+        if (response.success) {
+          currentEmojis = response.emojis;
+          cachedEmojiCount = response.count;
+          lastExtractedAt = Date.now();
+          const methodNote = response.method === 'api' ? ' (via Slack API)' : ' (via page scan)';
+          const fallbackColors = Array.isArray(response.emojis)
+            ? response.emojis.reduce((acc, e) => acc + (e && e.colorError ? 1 : 0), 0)
+            : 0;
 
-        const fallbackNote = fallbackColors > 0
-          ? ` (${fallbackColors.toLocaleString()} fallback colors)`
-          : '';
+          const fallbackNote = fallbackColors > 0
+            ? ` (${fallbackColors.toLocaleString()} fallback colors)`
+            : '';
 
-        const message = response.count > 10000 
-          ? `Successfully extracted ${response.count.toLocaleString()} emojis${methodNote}!`
-          : `Successfully extracted ${response.count.toLocaleString()} emojis${methodNote}!`;
-        showStatus(emojiStatus, message + fallbackNote, fallbackColors > 0 ? 'info' : 'success');
-        updateCacheDisplay(currentEmojis);
-        updateCacheDateDisplay(Date.now());
-        checkReadyToGenerate();
-      } else if (response.inProgress) {
-        showStatus(emojiStatus, 'Extraction already in progress. Please wait.', 'info');
-      } else {
-        showStatus(emojiStatus, 'Error: ' + response.error, 'error');
-      }
-      
-      extractEmojisBtn.disabled = false;
-      forceResyncBtn.disabled = false;
-    });
+          const message = `Successfully extracted ${response.count.toLocaleString()} emojis${methodNote}!`;
+          showStatus(emojiStatus, message + fallbackNote, fallbackColors > 0 ? 'info' : 'success');
+          updateCacheDisplay(currentEmojis);
+          updateCacheDateDisplay(Date.now());
+          checkReadyToGenerate();
+        } else if (response.inProgress) {
+          showStatus(emojiStatus, 'Extraction already in progress. Please wait.', 'info');
+        } else {
+          showStatus(emojiStatus, 'Error: ' + response.error, 'error');
+        }
+        
+        extractEmojisBtn.disabled = false;
+      });
+    }
   } catch (error) {
     hideExtractionProgress();
     showStatus(emojiStatus, 'Error: ' + error.message, 'error');
     extractEmojisBtn.disabled = false;
-    forceResyncBtn.disabled = false;
   }
 }
 

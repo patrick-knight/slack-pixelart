@@ -143,7 +143,7 @@ async function sampleEmojiColor(url) {
 
   // Use fetch from extension context (host_permissions) to avoid CORS issues seen in page/content context.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
     const response = await fetch(url, {
@@ -197,6 +197,12 @@ async function sampleEmojiColor(url) {
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request && request.action === 'sampleEmojiColors' && Array.isArray(request.urls)) {
+    Promise.all(request.urls.map(url => sampleEmojiColor(url)))
+      .then(results => sendResponse(results));
+    return true;
+  }
+
   if (request && request.action === 'sampleEmojiColor' && typeof request.url === 'string') {
     sampleEmojiColor(request.url).then(sendResponse);
     return true;

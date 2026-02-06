@@ -377,6 +377,30 @@
     });
   }
 
+  // Batch version: sample multiple emoji URLs in a single message round-trip
+  function getAverageColors(urls) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'sampleEmojiColors', urls }, (responses) => {
+        if (chrome.runtime.lastError || !responses) {
+          resolve(urls.map(() => ({
+            color: { r: 128, g: 128, b: 128 },
+            accentColor: { r: 128, g: 128, b: 128 },
+            variance: 999,
+            colorError: true
+          })));
+          return;
+        }
+        resolve(responses.map(response => ({
+          color: response.color || { r: 128, g: 128, b: 128 },
+          accentColor: response.accentColor || response.color || { r: 128, g: 128, b: 128 },
+          variance: typeof response.variance === 'number' ? response.variance : 999,
+          colorProfile: Array.isArray(response.colorProfile) ? response.colorProfile : undefined,
+          colorError: Boolean(response.colorError)
+        })));
+      });
+    });
+  }
+
   // Process emojis in batches to avoid browser freezing with large emoji sets
   async function mapWithConcurrency(items, concurrency, mapper) {
     const results = new Array(items.length);
@@ -400,13 +424,17 @@
     
     for (let i = 0; i < emojis.length; i += batchSize) {
       const batch = emojis.slice(i, i + batchSize);
+      const batchResults = new Array(batch.length);
+      const uncachedIndices = [];
+      const uncachedUrls = [];
 
-      // Limit network + decode concurrency; 55k+ emoji sets will otherwise melt the tab.
-      const batchResults = await mapWithConcurrency(batch, 8, async (emoji) => {
+      // Separate cached vs uncached
+      for (let j = 0; j < batch.length; j++) {
+        const emoji = batch[j];
         if (!forceResync && cachedVersion === COLOR_SAMPLER_VERSION) {
           const cached = cachedByUrl.get(emoji.url);
           if (cached && cached.color && !cached.colorError) {
-            return {
+            batchResults[j] = {
               ...emoji,
               color: cached.color,
               accentColor: cached.accentColor || cached.color,
@@ -414,22 +442,31 @@
               colorProfile: Array.isArray(cached.colorProfile) ? cached.colorProfile : undefined,
               colorError: false
             };
+            continue;
           }
         }
+        uncachedIndices.push(j);
+        uncachedUrls.push(emoji.url);
+      }
 
-        const { color, accentColor, variance, colorProfile, colorError } = await getAverageColor(emoji.url);
-        return { ...emoji, color, accentColor, variance, colorProfile, colorError };
-      });
+      // Batch-sample all uncached emojis in one message
+      if (uncachedUrls.length > 0) {
+        const colorResults = await getAverageColors(uncachedUrls);
+        for (let k = 0; k < uncachedIndices.length; k++) {
+          const j = uncachedIndices[k];
+          const emoji = batch[j];
+          const cr = colorResults[k];
+          batchResults[j] = { ...emoji, ...cr };
+        }
+      }
 
       results.push(...batchResults);
       
       const currentBatch = Math.floor(i / batchSize) + 1;
-      
       if (onProgress) {
         onProgress(currentBatch, totalBatches, results.length);
       }
       
-      // Calculate progress (70% to 95% for color processing)
       const colorProgress = 70 + Math.floor((currentBatch / totalBatches) * 25);
       sendProgressUpdate(
         'Analyzing colors...', 
@@ -437,7 +474,6 @@
         `Processing ${results.length.toLocaleString()} of ${emojis.length.toLocaleString()} emojis`
       );
       
-      // Small delay between batches to keep UI responsive
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     
