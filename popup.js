@@ -652,6 +652,101 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   }
 });
 
+// Analyze an image and auto-configure Advanced Image Controls
+function analyzeAndAutoConfig(imageSource, isUrl) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+
+  const onLoad = () => {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, size, size);
+    const { data } = ctx.getImageData(0, 0, size, size);
+
+    // Compute metrics: color count, average variance, edge density
+    const colorSet = new Set();
+    let totalVariance = 0;
+    let edgePixels = 0;
+    const pixels = size * size;
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        // Quantize to 4-bit per channel for unique color counting
+        const qr = data[i] >> 4, qg = data[i + 1] >> 4, qb = data[i + 2] >> 4;
+        colorSet.add((qr << 8) | (qg << 4) | qb);
+
+        // Edge detection: compare with right and bottom neighbors
+        if (x < size - 1) {
+          const j = (y * size + x + 1) * 4;
+          const diff = Math.abs(data[i] - data[j]) + Math.abs(data[i + 1] - data[j + 1]) + Math.abs(data[i + 2] - data[j + 2]);
+          if (diff > 80) edgePixels++;
+          totalVariance += diff;
+        }
+        if (y < size - 1) {
+          const j = ((y + 1) * size + x) * 4;
+          const diff = Math.abs(data[i] - data[j]) + Math.abs(data[i + 1] - data[j + 1]) + Math.abs(data[i + 2] - data[j + 2]);
+          if (diff > 80) edgePixels++;
+          totalVariance += diff;
+        }
+      }
+    }
+
+    const uniqueColors = colorSet.size;
+    const avgVariance = totalVariance / (2 * pixels);
+    const edgeDensity = edgePixels / (2 * pixels);
+
+    // Classify: photo (many colors, smooth gradients) vs graphic (few colors, hard edges)
+    const isPhoto = uniqueColors > 500 && edgeDensity < 0.3;
+    const isGraphic = uniqueColors < 200 || edgeDensity > 0.4;
+
+    if (isPhoto) {
+      // Photo preset: smooth gradients, solid emojis, sharpening
+      applyPreset({ dithering: true, ditherStrength: 85, texturePenalty: 70, rasterSamples: 4, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 60 });
+      showStatus(imageStatus, 'Photo detected — settings optimized for photos', 'success');
+    } else if (isGraphic) {
+      // Logo/pixel art preset: no dithering, sharp edges
+      applyPreset({ dithering: false, ditherStrength: 0, texturePenalty: 40, rasterSamples: 2, lanczos: true, adaptiveSampling: true, adaptiveDithering: false, sharpening: 0 });
+      showStatus(imageStatus, 'Graphic/logo detected — settings optimized for sharp edges', 'success');
+    } else {
+      // Mixed/default preset
+      applyPreset({ dithering: true, ditherStrength: 70, texturePenalty: 55, rasterSamples: 3, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 30 });
+      showStatus(imageStatus, 'Image loaded — settings auto-configured', 'success');
+    }
+  };
+
+  img.onerror = () => {
+    // Analysis failed silently — keep current settings
+  };
+
+  if (isUrl) {
+    img.src = imageSource;
+  } else {
+    img.src = URL.createObjectURL(imageSource);
+    img.onload = () => { onLoad(); URL.revokeObjectURL(img.src); };
+    return;
+  }
+  img.onload = onLoad;
+}
+
+function applyPreset({ dithering, ditherStrength, texturePenalty, rasterSamples, lanczos, adaptiveSampling, adaptiveDithering, sharpening }) {
+  ditheringCheckbox.checked = dithering;
+  ditherStrengthInput.value = ditherStrength;
+  ditherStrengthRange.value = ditherStrength;
+  texturePenaltyInput.value = texturePenalty;
+  texturePenaltyRange.value = texturePenalty;
+  rasterSamplesInput.value = rasterSamples;
+  rasterSamplesRange.value = rasterSamples;
+  lanczosInterpolationCheckbox.checked = lanczos;
+  adaptiveSamplingCheckbox.checked = adaptiveSampling;
+  adaptiveDitheringCheckbox.checked = adaptiveDithering;
+  sharpeningStrengthInput.value = sharpening;
+  sharpeningStrengthRange.value = sharpening;
+}
+
 // Load image from URL
 loadFromUrlBtn.addEventListener('click', () => {
   const url = imageUrlInput.value.trim();
@@ -675,7 +770,7 @@ loadFromUrlBtn.addEventListener('click', () => {
   
   currentImageSource = url;
   currentImageIsUrl = true;
-  showStatus(imageStatus, 'Image URL loaded', 'success');
+  analyzeAndAutoConfig(url, true);
   checkReadyToGenerate();
 });
 
@@ -694,7 +789,7 @@ imageFileInput.addEventListener('change', (e) => {
   
   currentImageSource = file;
   currentImageIsUrl = false;
-  showStatus(imageStatus, `File loaded: ${file.name}`, 'success');
+  analyzeAndAutoConfig(file, false);
   checkReadyToGenerate();
 });
 
