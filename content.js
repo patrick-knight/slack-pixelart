@@ -71,17 +71,15 @@
     if (contextInvalidated) return;
     try {
       chrome.storage.local.set({ extractionProgress: { phase, percent, details, inProgress: true } });
+      chrome.runtime.sendMessage({
+        action: 'extractionProgress',
+        phase: phase,
+        percent: percent,
+        details: details
+      }).catch(() => {});
     } catch (e) {
-      if (isContextInvalidated(e)) { contextInvalidated = true; return; }
+      if (isContextInvalidated(e)) { contextInvalidated = true; }
     }
-    chrome.runtime.sendMessage({
-      action: 'extractionProgress',
-      phase: phase,
-      percent: percent,
-      details: details
-    }).catch(() => {
-      // Popup might be closed, ignore error
-    });
   }
 
   // Clear persisted progress state
@@ -416,7 +414,12 @@
   // Batch version: sample multiple emoji URLs in a single message round-trip
   function getAverageColors(urls) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ action: 'sampleEmojiColors', urls }, (responses) => {
+      if (contextInvalidated) {
+        resolve(urls.map(() => ({ color: { r: 128, g: 128, b: 128 }, accentColor: { r: 128, g: 128, b: 128 }, variance: 999, colorError: true })));
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage({ action: 'sampleEmojiColors', urls }, (responses) => {
         if (chrome.runtime.lastError || !responses) {
           resolve(urls.map(() => ({
             color: { r: 128, g: 128, b: 128 },
@@ -433,7 +436,11 @@
           colorProfile: Array.isArray(response.colorProfile) ? response.colorProfile : undefined,
           colorError: Boolean(response.colorError)
         })));
-      });
+        });
+      } catch (e) {
+        if (isContextInvalidated(e)) contextInvalidated = true;
+        resolve(urls.map(() => ({ color: { r: 128, g: 128, b: 128 }, accentColor: { r: 128, g: 128, b: 128 }, variance: 999, colorError: true })));
+      }
     });
   }
 
@@ -721,26 +728,30 @@
             variance: e.variance
           }));
           
-          chrome.storage.local.set({ 
-            slackEmojis: slimEmojis,
-            extractedAt: Date.now(),
-            extractionMethod: extractionMethod,
-            colorSamplerVersion: COLOR_SAMPLER_VERSION
-          }, () => {
-            if (chrome.runtime.lastError) {
-              console.warn('Storage save warning:', chrome.runtime.lastError.message);
-              // Still report success - emojis are in memory even if storage failed
-            }
-            sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
+          try {
+            chrome.storage.local.set({ 
+              slackEmojis: slimEmojis,
+              extractedAt: Date.now(),
+              extractionMethod: extractionMethod,
+              colorSamplerVersion: COLOR_SAMPLER_VERSION
+            }, () => {
+              if (chrome.runtime.lastError) {
+                console.warn('Storage save warning:', chrome.runtime.lastError.message);
+              }
+              sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
+              extractionInProgress = false;
+              clearExtractionProgress();
+              try { sendResponse({ 
+                success: true, 
+                count: emojisWithColors.length,
+                emojis: emojisWithColors,
+                method: extractionMethod
+              }); } catch (e) { /* popup closed */ }
+            });
+          } catch (e) {
             extractionInProgress = false;
             clearExtractionProgress();
-            try { sendResponse({ 
-              success: true, 
-              count: emojisWithColors.length,
-              emojis: emojisWithColors,
-              method: extractionMethod
-            }); } catch (e) { /* popup closed */ }
-          });
+          }
         })
         .catch(error => {
           extractionInProgress = false;
@@ -780,13 +791,17 @@
           });
 
           // Merge new emojis into storage so results persist even if popup is closed
-          const cached = await chrome.storage.local.get(['slackEmojis']);
-          const existing = cached.slackEmojis || [];
-          const slimNew = emojisWithColors.map(e => ({
-            name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance
-          }));
-          const merged = existing.concat(slimNew);
-          await chrome.storage.local.set({ slackEmojis: merged, extractedAt: Date.now() });
+          try {
+            const cached = await chrome.storage.local.get(['slackEmojis']);
+            const existing = cached.slackEmojis || [];
+            const slimNew = emojisWithColors.map(e => ({
+              name: e.name, url: e.url, color: e.color, accentColor: e.accentColor, variance: e.variance
+            }));
+            const merged = existing.concat(slimNew);
+            await chrome.storage.local.set({ slackEmojis: merged, extractedAt: Date.now() });
+          } catch (e) {
+            if (isContextInvalidated(e)) contextInvalidated = true;
+          }
 
           sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} new emojis ready!`);
           extractionInProgress = false;
@@ -844,7 +859,7 @@
       clearInterval(countCheckInterval);
       const parsed = parseInt(emojiCountEl.textContent.replace(/[^0-9]/g, ''), 10);
       if (!isNaN(parsed)) {
-        chrome.runtime.sendMessage({ action: 'emojiCountCheck', totalCount: parsed }).catch(() => {});
+        try { chrome.runtime.sendMessage({ action: 'emojiCountCheck', totalCount: parsed }).catch(() => {}); } catch (e) { /* context invalidated */ }
       }
     } else if (countCheckAttempts >= 30) {
       clearInterval(countCheckInterval);
