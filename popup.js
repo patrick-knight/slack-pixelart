@@ -18,6 +18,8 @@ function escapeHtml(str) {
 }
 
 // DOM elements
+const emojiPageUrlInput = document.getElementById('emojiPageUrl');
+const openEmojiPageBtn = document.getElementById('openEmojiPage');
 const extractEmojisBtn = document.getElementById('extractEmojis');
 const extractBtnText = document.getElementById('extractBtnText');
 const forceResyncBtn = document.getElementById('forceResync');
@@ -336,7 +338,11 @@ sharpeningStrengthInput.addEventListener('input', (e) => {
 });
 
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength', 'emojiPageUrl'], (result) => {
+  if (result.emojiPageUrl) {
+    emojiPageUrlInput.value = result.emojiPageUrl;
+  }
+
   if (result.slackEmojis && result.slackEmojis.length > 0) {
     currentEmojis = result.slackEmojis;
     cachedEmojiCount = result.slackEmojis.length;
@@ -393,6 +399,32 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering',
 // Save auto-sync preference when changed
 autoSyncCheckbox.addEventListener('change', () => {
   chrome.storage.local.set({ autoSync: autoSyncCheckbox.checked });
+});
+
+// Save emoji page URL when changed
+emojiPageUrlInput.addEventListener('change', () => {
+  chrome.storage.local.set({ emojiPageUrl: emojiPageUrlInput.value.trim() });
+});
+
+// Open emoji page in a new tab
+openEmojiPageBtn.addEventListener('click', () => {
+  const url = emojiPageUrlInput.value.trim();
+  if (!url) {
+    showStatus(emojiStatus, 'Please enter your Slack emoji page URL', 'error');
+    return;
+  }
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith('slack.com')) {
+      showStatus(emojiStatus, 'URL must be a slack.com domain', 'error');
+      return;
+    }
+  } catch {
+    showStatus(emojiStatus, 'Invalid URL format', 'error');
+    return;
+  }
+  chrome.storage.local.set({ emojiPageUrl: url });
+  chrome.tabs.create({ url });
 });
 
 ditheringCheckbox.addEventListener('change', () => {

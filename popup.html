@@ -28,7 +28,17 @@
         <h2>Extract Emojis</h2>
       </div>
       <div class="card-body">
-        <p class="help-text">Navigate to your workspace's emoji page and extract available emojis</p>
+        <p class="help-text">Enter your workspace's emoji page URL, open it, then extract emojis</p>
+        
+        <div class="input-group">
+          <label for="emojiPageUrl">
+            Emoji Page URL
+          </label>
+          <div class="input-with-button">
+            <input type="text" id="emojiPageUrl" placeholder="https://your-workspace.slack.com/customize/emoji">
+            <button id="openEmojiPage" class="btn btn-secondary" title="Open in new tab">Open</button>
+          </div>
+        </div>
         
         <!-- Cache Info -->
         <div id="cacheInfo" class="cache-info" style="display: none;">
