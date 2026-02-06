@@ -72,6 +72,23 @@
     });
   }
 
+  // Fetch with retry on 429 rate limit
+  async function fetchWithRetry(url, options, maxRetries = 3) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetch(url, options);
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('Retry-After'), 10);
+        const delay = (retryAfter && retryAfter > 0 ? retryAfter : Math.pow(2, attempt)) * 1000;
+        console.log(`Rate limited (429), retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      return response;
+    }
+    // Final attempt exhausted — return the last 429 response so caller can handle it
+    return fetch(url, options);
+  }
+
   // Function to extract emojis via Slack API (preferred method)
   async function extractEmojisViaApi() {
     const token = getSlackApiToken();
@@ -130,7 +147,7 @@
       // Fetch remaining pages sequentially to avoid rate limiting
       for (page = 2; page <= totalPages; page++) {
         try {
-          const response = await fetch(`${baseUrl}/api/emoji.adminList`, {
+          const response = await fetchWithRetry(`${baseUrl}/api/emoji.adminList`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -140,14 +157,14 @@
           });
           
           if (!response.ok) {
-            console.warn(`Page ${page} request failed: ${response.status}, continuing...`);
+            console.warn(`Page ${page} request failed: ${response.status}, skipping...`);
             continue;
           }
           
           const data = await response.json();
           
           if (!data.ok) {
-            console.warn(`Page ${page} API error: ${data.error}, continuing...`);
+            console.warn(`Page ${page} API error: ${data.error}, skipping...`);
             continue;
           }
           
@@ -545,7 +562,7 @@
 
       for (page = 2; page <= totalPages; page++) {
         try {
-          const response = await fetch(`${baseUrl}/api/emoji.adminList`, {
+          const response = await fetchWithRetry(`${baseUrl}/api/emoji.adminList`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -555,14 +572,14 @@
           });
 
           if (!response.ok) {
-            console.warn(`Delta page ${page} request failed: ${response.status}, continuing...`);
+            console.warn(`Delta page ${page} request failed: ${response.status}, skipping...`);
             continue;
           }
 
           const data = await response.json();
 
           if (!data.ok) {
-            console.warn(`Delta page ${page} API error: ${data.error}, continuing...`);
+            console.warn(`Delta page ${page} API error: ${data.error}, skipping...`);
             continue;
           }
 
