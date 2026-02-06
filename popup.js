@@ -7,6 +7,7 @@ const STATUS_MESSAGE_TIMEOUT = 2000; // Time to show status messages (ms)
 let currentEmojis = [];
 let currentResult = null;
 let cachedEmojiCount = 0;
+let lastExtractedAt = null;
 
 function escapeHtml(str) {
   return String(str)
@@ -346,6 +347,7 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering',
   if (result.slackEmojis && result.slackEmojis.length > 0) {
     currentEmojis = result.slackEmojis;
     cachedEmojiCount = result.slackEmojis.length;
+    lastExtractedAt = result.extractedAt;
     showStatus(emojiStatus, `${currentEmojis.length.toLocaleString()} emojis loaded from cache`, 'success');
     updateCacheDisplay(currentEmojis);
     updateCacheDateDisplay(result.extractedAt);
@@ -528,18 +530,74 @@ async function startExtraction(forceResync) {
   }
 }
 
+// Scan for deleted emojis in the background
+function startDeletedScan() {
+  try {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) return;
+      chrome.tabs.sendMessage(tabs[0].id, { action: 'scanDeletedEmojis', cachedNames: currentEmojis.map(e => e.name) }, (response) => {
+        try {
+          if (chrome.runtime.lastError) {
+            console.error('Deleted scan error:', chrome.runtime.lastError.message);
+            return;
+          }
+          if (response && response.success && response.deletedNames && response.deletedNames.length > 0) {
+            const deletedSet = new Set(response.deletedNames);
+            currentEmojis = currentEmojis.filter(e => !deletedSet.has(e.name));
+            cachedEmojiCount = currentEmojis.length;
+            chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: Date.now() });
+            updateCacheDisplay(currentEmojis);
+            updateCacheDateDisplay(Date.now());
+            showStatus(emojiStatus, `Removed ${response.deletedNames.length} deleted emoji${response.deletedNames.length !== 1 ? 's' : ''}`, 'info');
+          }
+        } catch (err) {
+          console.error('Deleted scan processing error:', err);
+        }
+      });
+    });
+  } catch (err) {
+    console.error('Deleted scan error:', err);
+  }
+}
+
 // Listen for progress updates from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'extractionProgress') {
     updateExtractionProgress(request.phase, request.percent, request.details);
   } else if (request.action === 'emojiCountCheck') {
-    // Content script detected emoji count, check if sync needed
-    if (request.totalCount > cachedEmojiCount && cachedEmojiCount > 0) {
-      showSyncAlert(request.totalCount, cachedEmojiCount);
-      
-      // Auto-sync if enabled
-      if (autoSyncCheckbox.checked) {
-        startExtraction(true);
+    if (request.totalCount !== cachedEmojiCount && cachedEmojiCount > 0) {
+      if (autoSyncCheckbox.checked && lastExtractedAt) {
+        showExtractionProgress();
+        updateExtractionProgress('Syncing new emojis...', 10, 'Checking for new emojis...');
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (!tabs[0]) {
+            hideExtractionProgress();
+            return;
+          }
+          chrome.tabs.sendMessage(tabs[0].id, { action: 'deltaExtractEmojis', lastSyncDate: lastExtractedAt }, (response) => {
+            if (chrome.runtime.lastError) {
+              hideExtractionProgress();
+              showStatus(emojiStatus, 'Sync error: ' + chrome.runtime.lastError.message, 'error');
+              return;
+            }
+            if (response && response.success && response.count > 0) {
+              currentEmojis = currentEmojis.concat(response.newEmojis);
+              cachedEmojiCount = currentEmojis.length;
+              const now = Date.now();
+              lastExtractedAt = now;
+              chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
+              updateCacheDisplay(currentEmojis);
+              updateCacheDateDisplay(now);
+              showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');
+            } else if (response && response.success) {
+              showStatus(emojiStatus, 'Cache is up to date', 'info');
+            }
+            hideExtractionProgress();
+            startDeletedScan();
+          });
+        });
+      } else {
+        showSyncAlert(request.totalCount, cachedEmojiCount);
       }
     }
   }

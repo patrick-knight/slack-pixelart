@@ -444,6 +444,119 @@
     return results;
   }
 
+  // Delta extraction: fetch all emojis via API but return only those created after lastSyncDate
+  async function deltaExtractEmojisViaApi(lastSyncDate) {
+    const token = getSlackApiToken();
+
+    if (!token) {
+      console.log('No API token found for delta extraction');
+      return null;
+    }
+
+    console.log('Delta extraction: fetching emojis created after', new Date(lastSyncDate).toISOString());
+    sendProgressUpdate('Connecting to API...', 10, 'Authenticating with Slack...');
+
+    const baseUrl = window.location.origin;
+    const cutoffSeconds = lastSyncDate / 1000;
+
+    try {
+      let allEmojis = [];
+      let page = 1;
+      const count = 500;
+
+      sendProgressUpdate('Fetching emoji list...', 15, 'Getting first page...');
+
+      const firstResponse = await fetch(`${baseUrl}/api/emoji.adminList`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `token=${encodeURIComponent(token)}&page=1&count=${count}`,
+        credentials: 'include'
+      });
+
+      if (!firstResponse.ok) {
+        throw new Error(`API request failed: ${firstResponse.status}`);
+      }
+
+      const firstData = await firstResponse.json();
+
+      if (!firstData.ok) {
+        console.log('emoji.adminList failed for delta extraction:', firstData.error);
+        return null;
+      }
+
+      allEmojis = allEmojis.concat(firstData.emoji || []);
+      const paging = firstData.paging || {};
+      const totalPages = paging.pages || 1;
+
+      console.log(`Delta page 1/${totalPages}: ${allEmojis.length} emojis`);
+      sendProgressUpdate('Fetching emojis...', 20, `Page 1/${totalPages} (${allEmojis.length.toLocaleString()} emojis)`);
+
+      for (page = 2; page <= totalPages; page++) {
+        try {
+          const response = await fetch(`${baseUrl}/api/emoji.adminList`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `token=${encodeURIComponent(token)}&page=${page}&count=${count}`,
+            credentials: 'include'
+          });
+
+          if (!response.ok) {
+            console.warn(`Delta page ${page} request failed: ${response.status}, continuing...`);
+            continue;
+          }
+
+          const data = await response.json();
+
+          if (!data.ok) {
+            console.warn(`Delta page ${page} API error: ${data.error}, continuing...`);
+            continue;
+          }
+
+          const emojis = data.emoji || [];
+          allEmojis = allEmojis.concat(emojis);
+
+          const fetchProgress = 20 + Math.floor((page / totalPages) * 40);
+          console.log(`Delta page ${page}/${totalPages}: +${emojis.length} emojis (total: ${allEmojis.length})`);
+          sendProgressUpdate('Fetching emojis...', fetchProgress, `Page ${page}/${totalPages} (${allEmojis.length.toLocaleString()} emojis)`);
+
+          if (page % 10 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (pageError) {
+          console.warn(`Error fetching delta page ${page}:`, pageError.message, '- continuing...');
+        }
+      }
+
+      // Filter to only emojis created after the cutoff, deduplicate, and convert to {name, url}
+      sendProgressUpdate('Filtering new emojis...', 65, 'Finding recently added emojis...');
+      const seenNames = new Set();
+      const result = [];
+
+      for (const emoji of allEmojis) {
+        if (emoji.name && emoji.url && !emoji.url.startsWith('alias:') && !seenNames.has(emoji.name)) {
+          if (emoji.created > cutoffSeconds) {
+            seenNames.add(emoji.name);
+            result.push({
+              name: emoji.name,
+              url: emoji.url
+            });
+          }
+        }
+      }
+
+      console.log(`Delta extraction: ${result.length} new emojis (out of ${allEmojis.length} total)`);
+      return result;
+
+    } catch (error) {
+      console.error('Delta API extraction failed:', error);
+      return null;
+    }
+  }
+
   // Listen for messages from the popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'extractEmojis') {
@@ -533,9 +646,80 @@
         });
       
       return true; // Keep the message channel open for async response
+    } else if (request.action === 'deltaExtractEmojis') {
+      if (extractionInProgress) {
+        console.log('Extraction already in progress, ignoring delta request');
+        sendResponse({ success: false, error: 'Extraction already in progress. Please wait.', inProgress: true });
+        return true;
+      }
+
+      extractionInProgress = true;
+      sendProgressUpdate('Starting delta sync...', 5, 'Looking for new emojis...');
+
+      deltaExtractEmojisViaApi(request.lastSyncDate)
+        .then(async (newEmojis) => {
+          if (!newEmojis) {
+            throw new Error('Delta extraction failed. Could not connect to Slack API.');
+          }
+
+          if (newEmojis.length === 0) {
+            extractionInProgress = false;
+            sendProgressUpdate('Complete!', 100, 'No new emojis found.');
+            sendResponse({ success: true, newEmojis: [], count: 0 });
+            return;
+          }
+
+          sendProgressUpdate('Analyzing colors...', 70, `Processing ${newEmojis.length.toLocaleString()} new emojis...`);
+
+          const emojisWithColors = await processEmojisInBatches(newEmojis, new Map(), -1, true, 200, (currentBatch, totalBatches, processedCount) => {
+            console.log(`Delta color batch ${currentBatch}/${totalBatches} (${processedCount} emojis processed)`);
+          });
+
+          sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} new emojis ready!`);
+          extractionInProgress = false;
+          sendResponse({ success: true, newEmojis: emojisWithColors, count: emojisWithColors.length });
+        })
+        .catch(error => {
+          extractionInProgress = false;
+          sendResponse({ success: false, error: error.message });
+        });
+
+      return true;
+    } else if (request.action === 'scanDeletedEmojis') {
+      const cachedNames = request.cachedNames || [];
+
+      extractEmojisViaApi()
+        .then(apiEmojis => {
+          if (!apiEmojis) {
+            throw new Error('Could not fetch current emoji list from API');
+          }
+
+          const currentNames = new Set(apiEmojis.map(e => e.name));
+          const deletedNames = cachedNames.filter(name => !currentNames.has(name));
+
+          sendResponse({ success: true, deletedNames });
+        })
+        .catch(error => {
+          sendResponse({ success: false, error: error.message });
+        });
+
+      return true;
     }
   });
 
   // Log extension loaded
   console.log('Slack Pixel Art extension loaded on emoji customization page');
+
+  // Detect emoji count from the page and notify the popup/background
+  try {
+    const emojiCountEl = document.querySelector('h4[data-qa="customize_emoji_count"]');
+    if (emojiCountEl) {
+      const parsed = parseInt(emojiCountEl.textContent.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(parsed)) {
+        chrome.runtime.sendMessage({ action: 'emojiCountCheck', totalCount: parsed }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    // Ignore errors (e.g., element not found, popup closed)
+  }
 })();
