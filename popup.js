@@ -4,6 +4,16 @@
 const MAX_PREVIEW_LINES = 15; // Maximum lines to show in preview
 const STATUS_MESSAGE_TIMEOUT = 2000; // Time to show status messages (ms)
 
+function slimEmojisForStorage(emojis) {
+  return emojis.map(e => ({
+    name: e.name,
+    url: e.url,
+    color: e.color,
+    accentColor: e.accentColor,
+    variance: e.variance
+  }));
+}
+
 let currentEmojis = [];
 let currentResult = null;
 let cachedEmojiCount = 0;
@@ -492,7 +502,7 @@ async function startExtraction() {
           cachedEmojiCount = currentEmojis.length;
           const now = Date.now();
           lastExtractedAt = now;
-          chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
+          chrome.storage.local.set({ slackEmojis: slimEmojisForStorage(currentEmojis), extractedAt: now });
           updateCacheDisplay(currentEmojis);
           updateCacheDateDisplay(now);
           showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');
@@ -567,7 +577,7 @@ function startDeletedScan() {
             const deletedSet = new Set(response.deletedNames);
             currentEmojis = currentEmojis.filter(e => !deletedSet.has(e.name));
             cachedEmojiCount = currentEmojis.length;
-            chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: Date.now() });
+            chrome.storage.local.set({ slackEmojis: slimEmojisForStorage(currentEmojis), extractedAt: Date.now() });
             updateCacheDisplay(currentEmojis);
             updateCacheDateDisplay(Date.now());
             showStatus(emojiStatus, `Removed ${response.deletedNames.length} deleted emoji${response.deletedNames.length !== 1 ? 's' : ''}`, 'info');
@@ -604,7 +614,7 @@ function handleEmojiCountCheck(totalCount) {
             cachedEmojiCount = currentEmojis.length;
             const now = Date.now();
             lastExtractedAt = now;
-            chrome.storage.local.set({ slackEmojis: currentEmojis, extractedAt: now });
+            chrome.storage.local.set({ slackEmojis: slimEmojisForStorage(currentEmojis), extractedAt: now });
             updateCacheDisplay(currentEmojis);
             updateCacheDateDisplay(now);
             showStatus(emojiStatus, `Synced ${response.count} new emoji${response.count !== 1 ? 's' : ''}`, 'success');

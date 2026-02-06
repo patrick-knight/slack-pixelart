@@ -480,6 +480,20 @@
     return results;
   }
 
+  // Fallback delta extraction using emoji.list (for non-admin users)
+  async function deltaViaEmojiList(baseUrl, token) {
+    sendProgressUpdate('Fetching emoji list...', 30, 'Using fallback API (non-admin)...');
+    const allEmojis = await extractEmojisViaEmojiList(baseUrl, token);
+    if (!allEmojis || allEmojis.length === 0) return null;
+
+    const cached = await chrome.storage.local.get(['slackEmojis']);
+    const cachedNames = new Set((cached.slackEmojis || []).map(e => e.name));
+    const newEmojis = allEmojis.filter(e => !cachedNames.has(e.name));
+
+    console.log(`Delta via emoji.list: ${newEmojis.length} new emojis (out of ${allEmojis.length} total)`);
+    return newEmojis;
+  }
+
   // Delta extraction: fetch all emojis via API but return only those created after lastSyncDate
   async function deltaExtractEmojisViaApi(lastSyncDate) {
     const token = getSlackApiToken();
@@ -518,8 +532,8 @@
       const firstData = await firstResponse.json();
 
       if (!firstData.ok) {
-        console.log('emoji.adminList failed for delta extraction:', firstData.error);
-        return null;
+        console.log('emoji.adminList failed for delta extraction:', firstData.error, '- falling back to emoji.list');
+        return await deltaViaEmojiList(baseUrl, token);
       }
 
       allEmojis = allEmojis.concat(firstData.emoji || []);
@@ -660,12 +674,24 @@
         .then(({ emojisWithColors, extractionMethod }) => {
           sendProgressUpdate('Saving...', 98, 'Caching emojis for offline use...');
           
+          const slimEmojis = emojisWithColors.map(e => ({
+            name: e.name,
+            url: e.url,
+            color: e.color,
+            accentColor: e.accentColor,
+            variance: e.variance
+          }));
+          
           chrome.storage.local.set({ 
-            slackEmojis: emojisWithColors,
+            slackEmojis: slimEmojis,
             extractedAt: Date.now(),
             extractionMethod: extractionMethod,
             colorSamplerVersion: COLOR_SAMPLER_VERSION
           }, () => {
+            if (chrome.runtime.lastError) {
+              console.warn('Storage save warning:', chrome.runtime.lastError.message);
+              // Still report success - emojis are in memory even if storage failed
+            }
             sendProgressUpdate('Complete!', 100, `${emojisWithColors.length.toLocaleString()} emojis ready to use!`);
             extractionInProgress = false;
             sendResponse({ 
