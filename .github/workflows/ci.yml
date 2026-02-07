@@ -59,9 +59,8 @@ jobs:
             *.js \
             *.html \
             *.css \
-            *.png \
             icons/ \
-            -x ".git/*" "node_modules/*" ".github/*" "*.md" "package*.json" "eslint*"
+            -x ".git/*" "node_modules/*" ".github/*" "*.md" "package*.json" "eslint*" "emojilisa.png"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
