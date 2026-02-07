@@ -25,9 +25,8 @@ jobs:
 
       - name: Verify tag matches manifest version
         run: |
-          # Extract tag name (e.g., v1.2.3) from the full ref (refs/tags/v1.2.3)
-          TAG="${GITHUB_REF_NAME#refs/tags/}"
-          # Strip leading "v" if present
+          # Extract tag version (strip leading "v" if present from tag like v1.2.3)
+          TAG="${GITHUB_REF_NAME}"
           TAG_VERSION="${TAG#v}"
           MANIFEST_VERSION="${{ steps.version.outputs.version }}"
 
