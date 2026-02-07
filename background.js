@@ -176,9 +176,9 @@ async function sampleEmojiColor(url) {
     }
 
     const imageData = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const { color, accentColor, variance } = computeFromImageData(imageData);
+    const { color, accentColor, variance, colorProfile } = computeFromImageData(imageData);
 
-    const result = { color, accentColor, variance, colorError: false };
+    const result = { color, accentColor, variance, colorProfile, colorError: false };
     memCache.set(url, result);
     return result;
   } catch (err) {
