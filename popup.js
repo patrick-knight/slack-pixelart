@@ -188,6 +188,20 @@ function renderVisualPreview(grid, emojiSize = 16) {
   const cols = grid[0] ? grid[0].length : 0;
   const rows = grid.length;
   
+  // Auto-fit: calculate emoji size so grid fills available width without scrolling.
+  // visualPreview has 12px padding on each side; in side-by-side mode the container
+  // splits into two panes with an 8px gap.
+  const previewPadding = 24; // 12px * 2
+  const availableWidth = visualPreview.clientWidth > 0
+    ? visualPreview.clientWidth - previewPadding
+    : 650 - 32 - previewPadding; // fallback: popup - container padding - preview padding
+  const isSideBySide = referenceImageUrl && comparisonMode === 'side-by-side';
+  const panes = isSideBySide ? 2 : 1;
+  const gapBetweenPanes = isSideBySide ? 8 : 0;
+  const paneWidth = (availableWidth - gapBetweenPanes) / panes;
+  const autoSize = cols > 0 ? Math.floor(paneWidth / cols) : emojiSize;
+  emojiSize = Math.max(8, Math.min(32, autoSize));
+  
   // Add zoom controls
   const zoomControls = document.createElement('div');
   zoomControls.className = 'zoom-controls';
