@@ -58,7 +58,7 @@
   // Track if extraction is in progress to prevent duplicate runs
   let extractionInProgress = false;
 
-  const COLOR_SAMPLER_VERSION = 5;
+  const COLOR_SAMPLER_VERSION = 6;
 
   // Send progress update to popup and persist to storage
   let contextInvalidated = false;
