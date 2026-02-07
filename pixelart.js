@@ -250,6 +250,7 @@ class PixelArtConverter {
     const kA = Math.floor(lab.a / binA);
     const kB = Math.floor(lab.b / binB);
     
+    const seen = new Set();
     const candidates = [];
 
     const collect = (radius) => {
@@ -257,8 +258,14 @@ class PixelArtConverter {
         for (let da = -radius; da <= radius; da++) {
           for (let db = -radius; db <= radius; db++) {
             const key = `${kL + dL},${kA + da},${kB + db}`;
-            if (colorIndex.has(key)) {
-              candidates.push(...colorIndex.get(key));
+            const bucket = colorIndex.get(key);
+            if (bucket) {
+              for (const emoji of bucket) {
+                if (!seen.has(emoji)) {
+                  seen.add(emoji);
+                  candidates.push(emoji);
+                }
+              }
             }
           }
         }
@@ -291,16 +298,14 @@ class PixelArtConverter {
     return PixelArtConverter.EXEMPTED_EMOJI_PATTERNS.some(pattern => lowerName.includes(pattern));
   }
 
-  // Find the best matching emoji for a given color (Python-style algorithm)
-  findBestEmoji(targetColor) {
+  // Find the best matching emoji for a given color.
+  // `targetColor` is an sRGB 8-bit color ({r, g, b} in the 0..255 range).
+  // Optionally, a precomputed OKLab color ({L, a, b}) can be passed as
+  // `targetLabOverride` to avoid recomputing the RGB → linear RGB → OKLab conversion.
+  findBestEmoji(targetColor, targetLabOverride = null) {
     // Use spatial index to reduce search space for large emoji sets
     const candidates = this.getCandidateEmojis(targetColor);
-    const targetLab = this.linearToOklab(this.rgb8ToLinear(targetColor));
-
-    // If target isn't near-white, let accentColor influence matches more.
-    // This helps a lot for outlined/transparent emojis whose mean tends to white.
-    const fromWhite = (255 - targetColor.r) + (255 - targetColor.g) + (255 - targetColor.b);
-    const accentBias = fromWhite > 90 ? 0.85 : 1.05;
+    const targetLab = targetLabOverride || this.linearToOklab(this.rgb8ToLinear(targetColor));
 
     let best = null;
     let bestDist = Infinity;
@@ -317,12 +322,26 @@ class PixelArtConverter {
 
       let dist;
       if (emoji._labProfile) {
-        // Multi-region profile: pick the cluster closest to target color
-        // Weight bias: slightly favor matching the dominant cluster
-        dist = Infinity;
+        // Multi-region profile: blend overall visual impression with best cluster match.
+        // The weighted-average lab represents what the viewer perceives at a distance,
+        // while the closest cluster captures when the target lands on one color.
+        let avgL = 0, avgA = 0, avgB = 0, totalW = 0;
+        let minClusterDist = Infinity;
         for (const entry of emoji._labProfile) {
-          const d = distFn(targetLab, entry.lab) / (0.5 + entry.weight);
-          if (d < dist) dist = d;
+          avgL += entry.lab.L * entry.weight;
+          avgA += entry.lab.a * entry.weight;
+          avgB += entry.lab.b * entry.weight;
+          totalW += entry.weight;
+          const d = distFn(targetLab, entry.lab);
+          if (d < minClusterDist) minClusterDist = d;
+        }
+        if (totalW > 0) {
+          const avgLab = { L: avgL / totalW, a: avgA / totalW, b: avgB / totalW };
+          const avgDist = distFn(targetLab, avgLab);
+          // Blend: overall impression (60%) + best cluster (40%)
+          dist = avgDist * 0.6 + minClusterDist * 0.4;
+        } else {
+          dist = minClusterDist;
         }
       } else {
         // Fallback: single mean + optional accent
@@ -331,7 +350,8 @@ class PixelArtConverter {
 
         if (emoji._labAccent) {
           const distAccent = distFn(targetLab, emoji._labAccent);
-          dist = Math.min(dist, distAccent * accentBias);
+          // Use whichever is closer; slightly favor the accent by making it 5% closer
+          dist = Math.min(dist, distAccent * 0.95);
         }
       }
 
@@ -379,7 +399,8 @@ class PixelArtConverter {
   // Find best emoji for a linear color with dithering (target in linear 0..1)
   findBestEmojiFromLinear(targetLinear) {
     const targetRgb = this.linearToRgb8(targetLinear);
-    return this.findBestEmoji(targetRgb);
+    const targetLab = this.linearToOklab(targetLinear);
+    return this.findBestEmoji(targetRgb, targetLab);
   }
 
   // Load and process an image
