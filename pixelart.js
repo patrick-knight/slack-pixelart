@@ -298,8 +298,10 @@ class PixelArtConverter {
     return PixelArtConverter.EXEMPTED_EMOJI_PATTERNS.some(pattern => lowerName.includes(pattern));
   }
 
-  // Find the best matching emoji for a given color
-  // Accepts target as OKLab ({L, a, b}) directly to avoid redundant conversions.
+  // Find the best matching emoji for a given color.
+  // `targetColor` is an sRGB 8-bit color ({r, g, b} in the 0..255 range).
+  // Optionally, a precomputed OKLab color ({L, a, b}) can be passed as
+  // `targetLabOverride` to avoid recomputing the RGB → linear RGB → OKLab conversion.
   findBestEmoji(targetColor, targetLabOverride = null) {
     // Use spatial index to reduce search space for large emoji sets
     const candidates = this.getCandidateEmojis(targetColor);
@@ -348,7 +350,7 @@ class PixelArtConverter {
 
         if (emoji._labAccent) {
           const distAccent = distFn(targetLab, emoji._labAccent);
-          // Use whichever is closer; slightly favor the mean as it's more representative
+          // Use whichever is closer; slightly favor the accent by making it 5% closer
           dist = Math.min(dist, distAccent * 0.95);
         }
       }
