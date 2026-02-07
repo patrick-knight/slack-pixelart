@@ -21,6 +21,16 @@ jobs:
           VERSION=$(jq -r '.version' manifest.json)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Validate tag matches manifest version
+        run: |
+          MANIFEST_VERSION="${{ steps.version.outputs.version }}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match manifest.json version ($MANIFEST_VERSION)"
+            exit 1
+          fi
+          echo "✓ Version validation passed: $MANIFEST_VERSION"
+
       - name: Package extension
         run: |
           zip -r "slack-pixelart-v${{ steps.version.outputs.version }}.zip" \
@@ -28,8 +38,8 @@ jobs:
             *.js \
             *.html \
             *.css \
-            *.png \
-            icons/
+            icons/ \
+            -x "emojilisa.png"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
