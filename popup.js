@@ -195,8 +195,9 @@ function renderVisualPreview(grid, emojiSize = 16) {
   const availableWidth = visualPreview.clientWidth > 0
     ? visualPreview.clientWidth - previewPadding
     : 650 - 32 - previewPadding; // fallback: popup - container padding - preview padding
-  const panes = referenceImageUrl ? 2 : 1;
-  const gapBetweenPanes = referenceImageUrl ? 8 : 0;
+  const isSideBySide = referenceImageUrl && comparisonMode === 'side-by-side';
+  const panes = isSideBySide ? 2 : 1;
+  const gapBetweenPanes = isSideBySide ? 8 : 0;
   const paneWidth = (availableWidth - gapBetweenPanes) / panes;
   const autoSize = cols > 0 ? Math.floor(paneWidth / cols) : emojiSize;
   emojiSize = Math.max(8, Math.min(32, autoSize));
