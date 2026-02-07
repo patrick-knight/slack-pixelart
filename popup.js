@@ -728,7 +728,7 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
     ctx.drawImage(img, 0, 0, size, size);
     const { data } = ctx.getImageData(0, 0, size, size);
 
-    // Compute metrics: color count and edge density
+    // Compute metrics: approximate unique color count and edge density
     const colorSet = new Set();
     let edgePixels = 0;
     const pixels = size * size;
