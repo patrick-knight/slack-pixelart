@@ -45,7 +45,7 @@ function escapeHtml(str) {
 const emojiPageUrlInput = document.getElementById('emojiPageUrl');
 const openEmojiPageBtn = document.getElementById('openEmojiPage');
 const extractEmojisBtn = document.getElementById('extractEmojis');
-const emojiStatus= document.getElementById('emojiStatus');
+const emojiStatus = document.getElementById('emojiStatus');
 const cacheInfo = document.getElementById('cacheInfo');
 const cacheCount = document.getElementById('cacheCount');
 const cacheDate = document.getElementById('cacheDate');
@@ -728,7 +728,7 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
     ctx.drawImage(img, 0, 0, size, size);
     const { data } = ctx.getImageData(0, 0, size, size);
 
-    // Compute metrics: color count, average variance, edge density
+    // Compute metrics: approximate unique color count and edge density
     const colorSet = new Set();
     let edgePixels = 0;
     const pixels = size * size;
@@ -755,7 +755,7 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
     }
 
     const uniqueColors = colorSet.size;
-    const edgeDensity= edgePixels / (2 * pixels);
+    const edgeDensity = edgePixels / (2 * pixels);
 
     // Classify: photo (many colors, smooth gradients) vs graphic (few colors, hard edges)
     const isPhoto = uniqueColors > 500 && edgeDensity < 0.3;
