@@ -155,8 +155,6 @@
       allEmojis = allEmojis.concat(firstData.emoji || []);
       const paging = firstData.paging || {};
       const totalPages = paging.pages || 1;
-      const totalEmojis = paging.total || allEmojis.length;
-      
       console.log(`Page 1/${totalPages}: ${allEmojis.length} emojis`);
       sendProgressUpdate('Fetching emojis...', 20, `Page 1/${totalPages} (${allEmojis.length.toLocaleString()} emojis)`);
       
@@ -386,31 +384,6 @@
     return emojis;
   }
 
-  // Function to get the average color of an image
-  function getAverageColor(imageUrl) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: 'sampleEmojiColor', url: imageUrl }, (response) => {
-        if (chrome.runtime.lastError || !response) {
-          resolve({
-            color: { r: 128, g: 128, b: 128 },
-            accentColor: { r: 128, g: 128, b: 128 },
-            variance: 999,
-            colorError: true
-          });
-          return;
-        }
-
-        resolve({
-          color: response.color || { r: 128, g: 128, b: 128 },
-          accentColor: response.accentColor || response.color || { r: 128, g: 128, b: 128 },
-          variance: typeof response.variance === 'number' ? response.variance : 999,
-          colorProfile: Array.isArray(response.colorProfile) ? response.colorProfile : undefined,
-          colorError: Boolean(response.colorError)
-        });
-      });
-    });
-  }
-
   // Batch version: sample multiple emoji URLs in a single message round-trip
   function getAverageColors(urls) {
     return new Promise((resolve) => {
@@ -442,23 +415,6 @@
         resolve(urls.map(() => ({ color: { r: 128, g: 128, b: 128 }, accentColor: { r: 128, g: 128, b: 128 }, variance: 999, colorError: true })));
       }
     });
-  }
-
-  // Process emojis in batches to avoid browser freezing with large emoji sets
-  async function mapWithConcurrency(items, concurrency, mapper) {
-    const results = new Array(items.length);
-    let nextIndex = 0;
-
-    const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-      while (true) {
-        const i = nextIndex++;
-        if (i >= items.length) return;
-        results[i] = await mapper(items[i], i);
-      }
-    });
-
-    await Promise.all(workers);
-    return results;
   }
 
   async function processEmojisInBatches(emojis, cachedByUrl, cachedVersion, forceResync, batchSize = 200, onProgress = null) {
