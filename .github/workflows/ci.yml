@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Validate manifest.json is valid JSON
         run: cat manifest.json | jq .
 
@@ -55,9 +59,8 @@ jobs:
             *.js \
             *.html \
             *.css \
-            *.png \
             icons/ \
-            -x ".git/*" "node_modules/*" ".github/*" "*.md" "package*.json" "eslint*"
+            -x ".git/*" "node_modules/*" ".github/*" "*.md" "package*.json" "eslint*" "emojilisa.png"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
