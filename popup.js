@@ -1,3 +1,4 @@
+/* global PixelArtConverter */
 // Popup script - handles UI interactions and coordinates conversion
 
 // Constants
@@ -44,7 +45,6 @@ function escapeHtml(str) {
 const emojiPageUrlInput = document.getElementById('emojiPageUrl');
 const openEmojiPageBtn = document.getElementById('openEmojiPage');
 const extractEmojisBtn = document.getElementById('extractEmojis');
-const extractBtnText = document.getElementById('extractBtnText');
 const emojiStatus = document.getElementById('emojiStatus');
 const cacheInfo = document.getElementById('cacheInfo');
 const cacheCount = document.getElementById('cacheCount');
@@ -728,9 +728,8 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
     ctx.drawImage(img, 0, 0, size, size);
     const { data } = ctx.getImageData(0, 0, size, size);
 
-    // Compute metrics: color count, average variance, edge density
+    // Compute metrics: color count and edge density
     const colorSet = new Set();
-    let totalVariance = 0;
     let edgePixels = 0;
     const pixels = size * size;
 
@@ -746,19 +745,16 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
           const j = (y * size + x + 1) * 4;
           const diff = Math.abs(data[i] - data[j]) + Math.abs(data[i + 1] - data[j + 1]) + Math.abs(data[i + 2] - data[j + 2]);
           if (diff > 80) edgePixels++;
-          totalVariance += diff;
         }
         if (y < size - 1) {
           const j = ((y + 1) * size + x) * 4;
           const diff = Math.abs(data[i] - data[j]) + Math.abs(data[i + 1] - data[j + 1]) + Math.abs(data[i + 2] - data[j + 2]);
           if (diff > 80) edgePixels++;
-          totalVariance += diff;
         }
       }
     }
 
     const uniqueColors = colorSet.size;
-    const avgVariance = totalVariance / (2 * pixels);
     const edgeDensity = edgePixels / (2 * pixels);
 
     // Classify: photo (many colors, smooth gradients) vs graphic (few colors, hard edges)

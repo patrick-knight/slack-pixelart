@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read version from manifest.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate tag matches manifest version
+        run: |
+          MANIFEST_VERSION="${{ steps.version.outputs.version }}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match manifest.json version ($MANIFEST_VERSION)"
+            exit 1
+          fi
+          echo "✓ Version validation passed: $MANIFEST_VERSION"
+
+      - name: Package extension
+        run: |
+          zip -r "slack-pixelart-v${{ steps.version.outputs.version }}.zip" \
+            manifest.json \
+            *.js \
+            *.html \
+            *.css \
+            icons/ \
+            -x "emojilisa.png"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: slack-pixelart-v${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
