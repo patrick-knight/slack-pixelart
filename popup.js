@@ -78,6 +78,14 @@ const adaptiveSamplingCheckbox = document.getElementById('adaptiveSampling');
 const adaptiveDitheringCheckbox = document.getElementById('adaptiveDithering');
 const sharpeningStrengthInput = document.getElementById('sharpeningStrength');
 const sharpeningStrengthRange = document.getElementById('sharpeningStrengthRange');
+const colorMetricSelect = document.getElementById('colorMetric');
+const saturationBoostInput = document.getElementById('saturationBoost');
+const saturationBoostRange = document.getElementById('saturationBoostRange');
+const claheCheckbox = document.getElementById('clahe');
+const spatialCoherenceCheckbox = document.getElementById('spatialCoherence');
+const hybridDitheringCheckbox = document.getElementById('hybridDithering');
+const perColorToleranceCheckbox = document.getElementById('perColorTolerance');
+const medianFilterCheckbox = document.getElementById('medianFilter');
 const generateBtn = document.getElementById('generate');
 const generateStatus = document.getElementById('generateStatus');
 const progressBar = document.getElementById('progress');
@@ -369,8 +377,16 @@ sharpeningStrengthInput.addEventListener('input', (e) => {
   sharpeningStrengthRange.value = e.target.value;
 });
 
+saturationBoostRange.addEventListener('input', (e) => {
+  saturationBoostInput.value = e.target.value;
+});
+
+saturationBoostInput.addEventListener('input', (e) => {
+  saturationBoostRange.value = e.target.value;
+});
+
 // Load saved emojis and settings on popup open
-chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength', 'emojiPageUrl', 'extractionProgress'], (result) => {
+chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering', 'ditherStrength', 'texturePenalty', 'rasterSamples', 'lanczosInterpolation', 'adaptiveSampling', 'adaptiveDithering', 'sharpeningStrength', 'emojiPageUrl', 'extractionProgress', 'colorMetric', 'saturationBoost', 'clahe', 'spatialCoherence', 'hybridDithering', 'perColorTolerance', 'medianFilter'], (result) => {
   // Restore in-progress extraction progress bar
   if (result.extractionProgress && result.extractionProgress.inProgress) {
     const ep = result.extractionProgress;
@@ -435,6 +451,35 @@ chrome.storage.local.get(['slackEmojis', 'extractedAt', 'autoSync', 'dithering',
     sharpeningStrengthInput.value = result.sharpeningStrength;
     sharpeningStrengthRange.value = result.sharpeningStrength;
   }
+
+  if (result.colorMetric !== undefined) {
+    colorMetricSelect.value = result.colorMetric;
+  }
+
+  if (result.saturationBoost !== undefined) {
+    saturationBoostInput.value = result.saturationBoost;
+    saturationBoostRange.value = result.saturationBoost;
+  }
+
+  if (result.clahe !== undefined) {
+    claheCheckbox.checked = result.clahe;
+  }
+
+  if (result.spatialCoherence !== undefined) {
+    spatialCoherenceCheckbox.checked = result.spatialCoherence;
+  }
+
+  if (result.hybridDithering !== undefined) {
+    hybridDitheringCheckbox.checked = result.hybridDithering;
+  }
+
+  if (result.perColorTolerance !== undefined) {
+    perColorToleranceCheckbox.checked = result.perColorTolerance;
+  }
+
+  if (result.medianFilter !== undefined) {
+    medianFilterCheckbox.checked = result.medianFilter;
+  }
 });
 
 // Save auto-sync preference when changed
@@ -498,6 +543,34 @@ adaptiveDitheringCheckbox.addEventListener('change', () => {
 
 sharpeningStrengthInput.addEventListener('change', () => {
   chrome.storage.local.set({ sharpeningStrength: parseInt(sharpeningStrengthInput.value) });
+});
+
+colorMetricSelect.addEventListener('change', () => {
+  chrome.storage.local.set({ colorMetric: colorMetricSelect.value });
+});
+
+saturationBoostInput.addEventListener('change', () => {
+  chrome.storage.local.set({ saturationBoost: parseInt(saturationBoostInput.value) });
+});
+
+claheCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ clahe: claheCheckbox.checked });
+});
+
+spatialCoherenceCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ spatialCoherence: spatialCoherenceCheckbox.checked });
+});
+
+hybridDitheringCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ hybridDithering: hybridDitheringCheckbox.checked });
+});
+
+perColorToleranceCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ perColorTolerance: perColorToleranceCheckbox.checked });
+});
+
+medianFilterCheckbox.addEventListener('change', () => {
+  chrome.storage.local.set({ medianFilter: medianFilterCheckbox.checked });
 });
 
 // Extract emojis from current tab
@@ -762,16 +835,16 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
     const isGraphic = uniqueColors < 200 || edgeDensity > 0.4;
 
     if (isPhoto) {
-      // Photo preset: smooth gradients, solid emojis, sharpening
-      applyPreset({ dithering: true, ditherStrength: 85, texturePenalty: 70, rasterSamples: 4, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 60 });
+      // Photo preset: smooth gradients, solid emojis, sharpening, CLAHE for detail
+      applyPreset({ dithering: true, ditherStrength: 85, texturePenalty: 70, rasterSamples: 4, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 60, colorMetric: 'ciede2000', saturationBoost: 115, clahe: true, spatialCoherence: true, hybridDithering: true, perColorTolerance: true, medianFilter: false });
       showStatus(imageStatus, 'Photo detected — settings optimized for photos', 'success');
     } else if (isGraphic) {
       // Logo/pixel art preset: no dithering, sharp edges
-      applyPreset({ dithering: false, ditherStrength: 0, texturePenalty: 40, rasterSamples: 2, lanczos: true, adaptiveSampling: true, adaptiveDithering: false, sharpening: 0 });
+      applyPreset({ dithering: false, ditherStrength: 0, texturePenalty: 40, rasterSamples: 2, lanczos: true, adaptiveSampling: true, adaptiveDithering: false, sharpening: 0, colorMetric: 'oklab', saturationBoost: 100, clahe: false, spatialCoherence: false, hybridDithering: false, perColorTolerance: false, medianFilter: false });
       showStatus(imageStatus, 'Graphic/logo detected — settings optimized for sharp edges', 'success');
     } else {
       // Mixed/default preset
-      applyPreset({ dithering: true, ditherStrength: 70, texturePenalty: 55, rasterSamples: 3, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 30 });
+      applyPreset({ dithering: true, ditherStrength: 70, texturePenalty: 55, rasterSamples: 3, lanczos: true, adaptiveSampling: true, adaptiveDithering: true, sharpening: 30, colorMetric: 'oklab', saturationBoost: 105, clahe: false, spatialCoherence: false, hybridDithering: false, perColorTolerance: true, medianFilter: false });
       showStatus(imageStatus, 'Image loaded — settings auto-configured', 'success');
     }
   };
@@ -790,7 +863,7 @@ function analyzeAndAutoConfig(imageSource, isUrl) {
   img.onload = onLoad;
 }
 
-function applyPreset({ dithering, ditherStrength, texturePenalty, rasterSamples, lanczos, adaptiveSampling, adaptiveDithering, sharpening }) {
+function applyPreset({ dithering, ditherStrength, texturePenalty, rasterSamples, lanczos, adaptiveSampling, adaptiveDithering, sharpening, colorMetric, saturationBoost, clahe, spatialCoherence, hybridDithering, perColorTolerance, medianFilter }) {
   ditheringCheckbox.checked = dithering;
   ditherStrengthInput.value = ditherStrength;
   ditherStrengthRange.value = ditherStrength;
@@ -803,6 +876,14 @@ function applyPreset({ dithering, ditherStrength, texturePenalty, rasterSamples,
   adaptiveDitheringCheckbox.checked = adaptiveDithering;
   sharpeningStrengthInput.value = sharpening;
   sharpeningStrengthRange.value = sharpening;
+  colorMetricSelect.value = colorMetric;
+  saturationBoostInput.value = saturationBoost;
+  saturationBoostRange.value = saturationBoost;
+  claheCheckbox.checked = clahe;
+  spatialCoherenceCheckbox.checked = spatialCoherence;
+  hybridDitheringCheckbox.checked = hybridDithering;
+  perColorToleranceCheckbox.checked = perColorTolerance;
+  medianFilterCheckbox.checked = medianFilter;
 }
 
 // Load image from URL
@@ -891,7 +972,14 @@ generateBtn.addEventListener('click', async () => {
       lanczosInterpolation: lanczosInterpolationCheckbox.checked,
       adaptiveSampling: adaptiveSamplingCheckbox.checked,
       adaptiveDithering: adaptiveDitheringCheckbox.checked,
-      sharpeningStrength: parseInt(sharpeningStrengthInput.value)
+      sharpeningStrength: parseInt(sharpeningStrengthInput.value),
+      colorMetric: colorMetricSelect.value,
+      saturationBoost: parseInt(saturationBoostInput.value),
+      clahe: claheCheckbox.checked,
+      spatialCoherence: spatialCoherenceCheckbox.checked,
+      hybridDithering: hybridDitheringCheckbox.checked,
+      perColorTolerance: perColorToleranceCheckbox.checked,
+      medianFilter: medianFilterCheckbox.checked
     };
 
     const converter = new PixelArtConverter(currentEmojis, options);
