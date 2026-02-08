@@ -67,7 +67,7 @@ jobs:
             -x ".git/*" "node_modules/*" ".github/*" "*.md" "package*.json" "eslint*" "emojilisa.png"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: slack-pixelart-extension
           path: dist/slack-pixelart.zip
