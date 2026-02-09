@@ -347,13 +347,17 @@ class PixelArtConverter {
         emoji._labProfile = profile.map(entry => {
           if (Array.isArray(entry)) {
             // Compact format: [r, g, b, weight_percent]
+            const lin = this.rgb8ToLinear({ r: entry[0], g: entry[1], b: entry[2] });
             return {
-              lab: this.linearToOklab(this.rgb8ToLinear({ r: entry[0], g: entry[1], b: entry[2] })),
+              lin: lin,
+              lab: this.linearToOklab(lin),
               weight: (entry[3] || 50) / 100
             };
           }
+          const lin = this.rgb8ToLinear(entry.rgb);
           return {
-            lab: this.linearToOklab(this.rgb8ToLinear(entry.rgb)),
+            lin: lin,
+            lab: this.linearToOklab(lin),
             weight: entry.weight
           };
         });
@@ -530,28 +534,58 @@ class PixelArtConverter {
       if (!emoji || !emoji.color) continue;
 
       let dist;
+      let baseColorDist; // Base color distance before penalties (for CIEDE2000 re-ranking)
       if (emoji._labProfile) {
         // Multi-region profile: blend overall visual impression with best cluster match.
-        let avgL = 0, avgA = 0, avgB = 0, totalW = 0;
-        let minClusterDist = Infinity;
-        for (const entry of emoji._labProfile) {
-          avgL += entry.lab.L * entry.weight;
-          avgA += entry.lab.a * entry.weight;
-          avgB += entry.lab.b * entry.weight;
-          totalW += entry.weight;
-          const d = distFn(targetLab, entry.lab);
-          if (d < minClusterDist) minClusterDist = d;
-        }
-        if (totalW > 0) {
-          const avgLab = { L: avgL / totalW, a: avgA / totalW, b: avgB / totalW };
-          const avgDist = distFn(targetLab, avgLab);
-          // Blend: overall impression (60%) + best cluster (40%)
-          dist = avgDist * 0.6 + minClusterDist * 0.4;
+        // For Jzazbz metric, convert profile clusters to Jzazbz on-the-fly
+        if (useJzazbz) {
+          let avgJz = 0, avgAz = 0, avgBz = 0, totalW = 0;
+          let minClusterDist = Infinity;
+          for (const entry of emoji._labProfile) {
+            // Convert linear RGB cluster to Jzazbz
+            const clusterJzazbz = this.linearToJzazbz(entry.lin);
+            avgJz += clusterJzazbz.Jz * entry.weight;
+            avgAz += clusterJzazbz.az * entry.weight;
+            avgBz += clusterJzazbz.bz * entry.weight;
+            totalW += entry.weight;
+            const d = this.jzazbzDistance(jzazbzTarget, clusterJzazbz);
+            if (d < minClusterDist) minClusterDist = d;
+          }
+          if (totalW > 0) {
+            const avgJzazbz = { Jz: avgJz / totalW, az: avgAz / totalW, bz: avgBz / totalW };
+            const avgDist = this.jzazbzDistance(jzazbzTarget, avgJzazbz);
+            dist = avgDist * 0.6 + minClusterDist * 0.4;
+            baseColorDist = dist;
+          } else {
+            dist = minClusterDist;
+            baseColorDist = dist;
+          }
         } else {
-          dist = minClusterDist;
+          // OKLab or OKLab+HK: use profile directly
+          let avgL = 0, avgA = 0, avgB = 0, totalW = 0;
+          let minClusterDist = Infinity;
+          for (const entry of emoji._labProfile) {
+            avgL += entry.lab.L * entry.weight;
+            avgA += entry.lab.a * entry.weight;
+            avgB += entry.lab.b * entry.weight;
+            totalW += entry.weight;
+            const d = distFn(targetLab, entry.lab);
+            if (d < minClusterDist) minClusterDist = d;
+          }
+          if (totalW > 0) {
+            const avgLab = { L: avgL / totalW, a: avgA / totalW, b: avgB / totalW };
+            const avgDist = distFn(targetLab, avgLab);
+            // Blend: overall impression (60%) + best cluster (40%)
+            dist = avgDist * 0.6 + minClusterDist * 0.4;
+            baseColorDist = dist;
+          } else {
+            dist = minClusterDist;
+            baseColorDist = dist;
+          }
         }
       } else if (useJzazbz && emoji._jzazbz) {
         dist = this.jzazbzDistance(jzazbzTarget, emoji._jzazbz);
+        baseColorDist = dist;
       } else {
         // Fallback: single mean + optional accent
         const emojiLab = emoji._lab || this.linearToOklab(this.rgb8ToLinear(emoji.color));
@@ -562,6 +596,7 @@ class PixelArtConverter {
           // Use whichever is closer; slightly favor the accent by making it 5% closer
           dist = Math.min(dist, distAccent * 0.95);
         }
+        baseColorDist = dist;
       }
 
       // If we couldn't read the emoji pixels during extraction (CORS/taint), its color is a fallback.
@@ -580,7 +615,7 @@ class PixelArtConverter {
 
       // For CIEDE2000: collect top 20 candidates by OKLab, then re-rank
       if (useCiede) {
-        topCandidates.push({ emoji, dist });
+        topCandidates.push({ emoji, dist, baseColorDist });
         continue;
       }
 
@@ -611,11 +646,13 @@ class PixelArtConverter {
       for (const entry of rerank) {
         const cieLab = entry.emoji._cieLab || this.linearToCieLab(entry.emoji._lin || this.rgb8ToLinear(entry.emoji.color));
         entry.emoji._cieLab = cieLab;
-        entry.dist = this.ciede2000Distance(ciede2000Target, cieLab);
+        // Compute new base CIEDE2000 distance, then add back the penalties
+        const baseCiede = this.ciede2000Distance(ciede2000Target, cieLab);
+        const penalty = entry.dist - entry.baseColorDist;
+        entry.dist = baseCiede + penalty;
       }
       rerank.sort((a, b) => a.dist - b.dist);
       best = rerank[0].emoji;
-      bestDist = rerank[0].dist;
       if (this.options.tolerance < 100) {
         for (const entry of rerank) {
           const isExempted = this.isExemptedEmoji(entry.emoji.name);
@@ -623,7 +660,6 @@ class PixelArtConverter {
           const maxUses = this.getEmojiMaxUses(entry.emoji);
           if (isExempted || usageCount < maxUses) {
             bestAllowed = entry.emoji;
-            bestAllowedDist = entry.dist;
             break;
           }
         }
@@ -1496,7 +1532,21 @@ class PixelArtConverter {
             // Ordered dithering for graphic/flat regions
             const threshold = PixelArtConverter.BAYER_8X8[y % 8][x % 8] - 0.5;
             const scale = baseDitherStrength * 0.3;
-            const baseLin = this.rgb8ToLinear(pixel);
+            let baseLin = this.rgb8ToLinear(pixel);
+            
+            // Consume any accumulated Floyd-Steinberg error at this pixel
+            // so error does not build up in ordered-dithered regions
+            const e = error[y][x];
+            if (e && (e.r !== 0 || e.g !== 0 || e.b !== 0)) {
+              baseLin = {
+                r: baseLin.r + e.r,
+                g: baseLin.g + e.g,
+                b: baseLin.b + e.b
+              };
+              // Clear the consumed error so it is not reused
+              error[y][x] = { r: 0, g: 0, b: 0 };
+            }
+            
             const targetLin = this.clampLinear({
               r: baseLin.r + threshold * scale,
               g: baseLin.g + threshold * scale,
