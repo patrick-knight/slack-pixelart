@@ -381,6 +381,10 @@ saturationBoostRange.addEventListener('input', (e) => {
   saturationBoostInput.value = e.target.value;
 });
 
+saturationBoostRange.addEventListener('change', () => {
+  chrome.storage.local.set({ saturationBoost: parseInt(saturationBoostRange.value) });
+});
+
 saturationBoostInput.addEventListener('input', (e) => {
   saturationBoostRange.value = e.target.value;
 });
