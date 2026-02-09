@@ -1,61 +1,97 @@
 // MV3 service worker: fetch and sample emoji colors without page CORS limitations
 
-const SAMPLE_SIZE = 16;
+const SAMPLE_SIZE = 24;
 
 // In-memory cache (clears when service worker restarts, but still helps a lot during a resync)
 const memCache = new Map();
 
-function computeFromImageData(imageData) {
-  const data = imageData.data;
-  let r = 0, g = 0, b = 0;
-  let ar = 0, ag = 0, ab = 0;
-  let accentCount = 0;
+// Precompute center-weighted Gaussian sampling weights (center pixels matter more, edge artifacts less)
+const centerWeights = computeCenterWeights(SAMPLE_SIZE);
 
-  let rr = 0, gg = 0, bb = 0;
+function computeCenterWeights(size) {
+  const weights = new Float32Array(size * size);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const sigma = size / 3;
+  const sigmaSquared2 = 2 * sigma * sigma;
+  let totalWeight = 0;
 
-  for (let i = 0; i < data.length; i += 4) {
-    const pr = data[i];
-    const pg = data[i + 1];
-    const pb = data[i + 2];
-    r += pr;
-    g += pg;
-    b += pb;
-
-    rr += pr * pr;
-    gg += pg * pg;
-    bb += pb * pb;
-
-    const fromWhite = (255 - pr) + (255 - pg) + (255 - pb);
-    if (fromWhite > 80) {
-      ar += pr;
-      ag += pg;
-      ab += pb;
-      accentCount++;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      const w = 0.3 + 0.7 * Math.exp(-(dx * dx + dy * dy) / sigmaSquared2);
+      weights[y * size + x] = w;
+      totalWeight += w;
     }
   }
 
-  const count = SAMPLE_SIZE * SAMPLE_SIZE;
-  const avg = {
-    r: Math.round(r / count),
-    g: Math.round(g / count),
-    b: Math.round(b / count)
-  };
+  // Normalize so weights sum to pixel count (keeps existing math compatible)
+  const scale = (size * size) / totalWeight;
+  for (let i = 0; i < weights.length; i++) {
+    weights[i] *= scale;
+  }
 
-  // Root-mean-square deviation (0..255-ish). Lower means more solid/flat color.
-  const vr = Math.max(0, rr / count - (avg.r * avg.r));
-  const vg = Math.max(0, gg / count - (avg.g * avg.g));
-  const vb = Math.max(0, bb / count - (avg.b * avg.b));
-  const variance = Math.sqrt((vr + vg + vb) / 3);
-
-  const accent = accentCount >= 8
-    ? { r: Math.round(ar / accentCount), g: Math.round(ag / accentCount), b: Math.round(ab / accentCount) }
-    : avg;
-
-  return { color: avg, accentColor: accent, variance, colorProfile: colorProfileFromPixels(data, count) };
+  return weights;
 }
 
-// Lightweight k-means (k=3) to extract dominant colors from sampled pixels
-function colorProfileFromPixels(data, n) {
+function computeFromImageData(imageData) {
+  const data = imageData.data;
+  const count = SAMPLE_SIZE * SAMPLE_SIZE;
+
+  let r = 0, g = 0, b = 0;
+  let ar = 0, ag = 0, ab = 0;
+  let accentWeight = 0;
+  let rr = 0, gg = 0, bb = 0;
+  let totalWeight = 0;
+
+  for (let i = 0; i < count; i++) {
+    const off = i * 4;
+    const pr = data[off];
+    const pg = data[off + 1];
+    const pb = data[off + 2];
+    const w = centerWeights[i];
+
+    r += pr * w;
+    g += pg * w;
+    b += pb * w;
+
+    rr += pr * pr * w;
+    gg += pg * pg * w;
+    bb += pb * pb * w;
+
+    totalWeight += w;
+
+    const fromWhite = (255 - pr) + (255 - pg) + (255 - pb);
+    if (fromWhite > 80) {
+      ar += pr * w;
+      ag += pg * w;
+      ab += pb * w;
+      accentWeight += w;
+    }
+  }
+
+  const avg = {
+    r: Math.round(r / totalWeight),
+    g: Math.round(g / totalWeight),
+    b: Math.round(b / totalWeight)
+  };
+
+  // Weighted root-mean-square deviation (0..255-ish). Lower means more solid/flat color.
+  const vr = Math.max(0, rr / totalWeight - (avg.r * avg.r));
+  const vg = Math.max(0, gg / totalWeight - (avg.g * avg.g));
+  const vb = Math.max(0, bb / totalWeight - (avg.b * avg.b));
+  const variance = Math.sqrt((vr + vg + vb) / 3);
+
+  const accent = accentWeight >= 8
+    ? { r: Math.round(ar / accentWeight), g: Math.round(ag / accentWeight), b: Math.round(ab / accentWeight) }
+    : avg;
+
+  return { color: avg, accentColor: accent, variance, colorProfile: colorProfileFromPixels(data, count, centerWeights) };
+}
+
+// Adaptive k-means to extract dominant colors from sampled pixels
+function colorProfileFromPixels(data, n, weights = null) {
   if (n === 0) return [];
 
   // Collect pixels as [r,g,b] arrays
@@ -65,8 +101,21 @@ function colorProfileFromPixels(data, n) {
     pixels[i] = [data[off], data[off + 1], data[off + 2]];
   }
 
+  // Adaptive k: analyze color diversity to pick cluster count
+  const colorSet = new Set();
+  for (let i = 0; i < n; i++) {
+    const qr = pixels[i][0] >> 4, qg = pixels[i][1] >> 4, qb = pixels[i][2] >> 4;
+    colorSet.add((qr << 8) | (qg << 4) | qb);
+  }
+  const uniqueColors = colorSet.size;
+  let k;
+  if (uniqueColors <= 3) k = 2;
+  else if (uniqueColors <= 10) k = 3;
+  else k = 4;
+  k = Math.min(k, uniqueColors);
+  if (k < 1) k = 1;
+
   // Maximin initialization: pick first pixel, then furthest from existing centroids
-  const k = 3;
   const centroids = [pixels[0].slice()];
   for (let c = 1; c < k; c++) {
     let bestIdx = 0, bestDist = -1;
@@ -94,22 +143,34 @@ function colorProfileFromPixels(data, n) {
       if (assignments[i] !== bestC) { assignments[i] = bestC; changed = true; }
     }
     if (!changed) break;
+    // Update centroids using center-weights
     for (let c = 0; c < k; c++) {
-      let sr = 0, sg = 0, sb = 0, cnt = 0;
+      let sr = 0, sg = 0, sb = 0, wSum = 0;
       for (let i = 0; i < n; i++) {
-        if (assignments[i] === c) { sr += pixels[i][0]; sg += pixels[i][1]; sb += pixels[i][2]; cnt++; }
+        if (assignments[i] === c) {
+          const w = weights ? weights[i] : 1;
+          sr += pixels[i][0] * w;
+          sg += pixels[i][1] * w;
+          sb += pixels[i][2] * w;
+          wSum += w;
+        }
       }
-      if (cnt > 0) centroids[c] = [Math.round(sr / cnt), Math.round(sg / cnt), Math.round(sb / cnt)];
+      if (wSum > 0) centroids[c] = [Math.round(sr / wSum), Math.round(sg / wSum), Math.round(sb / wSum)];
     }
   }
 
-  // Build profile and merge clusters closer than ~30 per channel
-  const counts = new Array(k).fill(0);
-  for (let i = 0; i < n; i++) counts[assignments[i]]++;
+  // Build profile with weighted counts and merge clusters closer than ~30 per channel
+  const clusterWeights = new Array(k).fill(0);
+  let totalClusterWeight = 0;
+  for (let i = 0; i < n; i++) {
+    const w = weights ? weights[i] : 1;
+    clusterWeights[assignments[i]] += w;
+    totalClusterWeight += w;
+  }
   let profile = [];
   for (let c = 0; c < k; c++) {
-    if (counts[c] > 0) {
-      profile.push({ rgb: { r: centroids[c][0], g: centroids[c][1], b: centroids[c][2] }, weight: counts[c] / n });
+    if (clusterWeights[c] > 0) {
+      profile.push({ rgb: { r: centroids[c][0], g: centroids[c][1], b: centroids[c][2] }, weight: clusterWeights[c] / totalClusterWeight });
     }
   }
   let didMerge = true;

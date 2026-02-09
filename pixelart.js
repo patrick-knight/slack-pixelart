@@ -6,9 +6,21 @@ class PixelArtConverter {
   static AVG_EMOJI_LENGTH = 10; // Average length of emoji in Slack format (:emoji_name:)
   static FALLBACK_EMOJI = 'white_square'; // Emoji used for transparent/null pixels
   static MIN_DIMENSION = 5; // Minimum grid dimension
-  
+
   // Emojis that are exempted from duplication rules (solid colors, blanks)
   static EXEMPTED_EMOJI_PATTERNS = ['space', 'blank', 'white', 'black', 'red', 'blue', 'green', 'yellow', 'square'];
+
+  // 8x8 Bayer ordered dithering matrix (normalized to 0-1 range)
+  static BAYER_8X8 = [
+    [ 0/64,48/64,12/64,60/64, 3/64,51/64,15/64,63/64],
+    [32/64,16/64,44/64,28/64,35/64,19/64,47/64,31/64],
+    [ 8/64,56/64, 4/64,52/64,11/64,59/64, 7/64,55/64],
+    [40/64,24/64,36/64,20/64,43/64,27/64,39/64,23/64],
+    [ 2/64,50/64,14/64,62/64, 1/64,49/64,13/64,61/64],
+    [34/64,18/64,46/64,30/64,33/64,17/64,45/64,29/64],
+    [10/64,58/64, 6/64,54/64, 9/64,57/64, 5/64,53/64],
+    [42/64,26/64,38/64,22/64,41/64,25/64,37/64,21/64]
+  ];
 
   constructor(emojis, options = {}) {
     this.emojis = emojis;
@@ -25,11 +37,21 @@ class PixelArtConverter {
       rasterSamples: options.rasterSamples ?? 3,
       rasterMaxSourceSide: options.rasterMaxSourceSide ?? 2048,
       colorMetric: options.colorMetric || 'oklab',
+      // New enhancement options
+      errorClamping: options.errorClamping ?? true,
+      clahe: options.clahe ?? false,
+      claheStrength: options.claheStrength ?? 40,
+      saturationBoost: options.saturationBoost ?? 100,
+      hybridDithering: options.hybridDithering ?? false,
+      medianFilter: options.medianFilter ?? false,
+      perColorTolerance: options.perColorTolerance ?? false,
+      spatialCoherence: options.spatialCoherence ?? false,
+      coherenceStrength: options.coherenceStrength ?? 50,
       ...options
     };
     this.usedEmojis = new Map(); // Track emoji usage
     this.maxEmojiUses = Infinity;
-    
+
     // Precompute color representations for better matching performance.
     // Mutates emoji objects in-place (safe: they are stored and reused).
     this.prepareEmojiColors();
@@ -138,6 +160,150 @@ class PixelArtConverter {
     return Math.sqrt(wL * dL * dL + wC * dC * dC + wH * dH2);
   }
 
+  // -------- CIE L*a*b* and CIEDE2000 --------
+
+  linearToXYZ(lin) {
+    return {
+      x: 0.4124564 * lin.r + 0.3575761 * lin.g + 0.1804375 * lin.b,
+      y: 0.2126729 * lin.r + 0.7151522 * lin.g + 0.0721750 * lin.b,
+      z: 0.0193339 * lin.r + 0.1191920 * lin.g + 0.9503041 * lin.b
+    };
+  }
+
+  xyzToLab(xyz) {
+    const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
+    const epsilon = 216 / 24389;
+    const kappa = 24389 / 27;
+
+    const f = (t) => t > epsilon ? Math.cbrt(t) : (kappa * t + 16) / 116;
+
+    const fx = f(xyz.x / Xn);
+    const fy = f(xyz.y / Yn);
+    const fz = f(xyz.z / Zn);
+
+    return {
+      L: 116 * fy - 16,
+      a: 500 * (fx - fy),
+      b: 200 * (fy - fz)
+    };
+  }
+
+  linearToCieLab(lin) {
+    return this.xyzToLab(this.linearToXYZ(lin));
+  }
+
+  ciede2000Distance(lab1, lab2) {
+    const L1 = lab1.L, a1 = lab1.a, b1 = lab1.b;
+    const L2 = lab2.L, a2 = lab2.a, b2 = lab2.b;
+
+    const C1 = Math.sqrt(a1 * a1 + b1 * b1);
+    const C2 = Math.sqrt(a2 * a2 + b2 * b2);
+    const Cmean = (C1 + C2) / 2;
+    const Cmean7 = Math.pow(Cmean, 7);
+    const G = 0.5 * (1 - Math.sqrt(Cmean7 / (Cmean7 + 6103515625))); // 25^7
+    const a1p = a1 * (1 + G);
+    const a2p = a2 * (1 + G);
+    const C1p = Math.sqrt(a1p * a1p + b1 * b1);
+    const C2p = Math.sqrt(a2p * a2p + b2 * b2);
+    const h1p = Math.atan2(b1, a1p) * 180 / Math.PI;
+    const h1pAdj = h1p < 0 ? h1p + 360 : h1p;
+    const h2p = Math.atan2(b2, a2p) * 180 / Math.PI;
+    const h2pAdj = h2p < 0 ? h2p + 360 : h2p;
+
+    const dLp = L2 - L1;
+    const dCp = C2p - C1p;
+    let dhp;
+    if (C1p * C2p === 0) {
+      dhp = 0;
+    } else if (Math.abs(h2pAdj - h1pAdj) <= 180) {
+      dhp = h2pAdj - h1pAdj;
+    } else if (h2pAdj - h1pAdj > 180) {
+      dhp = h2pAdj - h1pAdj - 360;
+    } else {
+      dhp = h2pAdj - h1pAdj + 360;
+    }
+    const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin(dhp * Math.PI / 360);
+
+    const Lpm = (L1 + L2) / 2;
+    const Cpm = (C1p + C2p) / 2;
+    let Hpm;
+    if (C1p * C2p === 0) {
+      Hpm = h1pAdj + h2pAdj;
+    } else if (Math.abs(h1pAdj - h2pAdj) <= 180) {
+      Hpm = (h1pAdj + h2pAdj) / 2;
+    } else if (h1pAdj + h2pAdj < 360) {
+      Hpm = (h1pAdj + h2pAdj + 360) / 2;
+    } else {
+      Hpm = (h1pAdj + h2pAdj - 360) / 2;
+    }
+
+    const T = 1 - 0.17 * Math.cos((Hpm - 30) * Math.PI / 180)
+                + 0.24 * Math.cos(2 * Hpm * Math.PI / 180)
+                + 0.32 * Math.cos((3 * Hpm + 6) * Math.PI / 180)
+                - 0.20 * Math.cos((4 * Hpm - 63) * Math.PI / 180);
+
+    const Lpm50sq = (Lpm - 50) * (Lpm - 50);
+    const SL = 1 + 0.015 * Lpm50sq / Math.sqrt(20 + Lpm50sq);
+    const SC = 1 + 0.045 * Cpm;
+    const SH = 1 + 0.015 * Cpm * T;
+    const Cpm7 = Math.pow(Cpm, 7);
+    const RT = -2 * Math.sqrt(Cpm7 / (Cpm7 + 6103515625))
+             * Math.sin(60 * Math.exp(-((Hpm - 275) / 25) * ((Hpm - 275) / 25)) * Math.PI / 180);
+
+    const dL = dLp / SL;
+    const dC = dCp / SC;
+    const dH = dHp / SH;
+    return Math.sqrt(dL * dL + dC * dC + dH * dH + RT * dC * dH);
+  }
+
+  // -------- Jzazbz color space --------
+
+  linearToJzazbz(lin) {
+    const xyz = this.linearToXYZ(lin);
+    const b_coeff = 1.15, g_coeff = 0.66;
+    const Xp = b_coeff * xyz.x - (b_coeff - 1) * xyz.z;
+    const Yp = g_coeff * xyz.y - (g_coeff - 1) * xyz.x;
+
+    const L = 0.41478972 * Xp + 0.579999 * Yp + 0.0146480 * xyz.z;
+    const M = -0.20151000 * Xp + 1.120649 * Yp + 0.0531008 * xyz.z;
+    const S = -0.01660080 * Xp + 0.264800 * Yp + 0.6684799 * xyz.z;
+
+    // PQ transfer function (for SDR content, normalize to 203 nits)
+    const pq = (v) => {
+      const x = Math.abs(v) / 10000 * 203;
+      const n = 0.15930176, p = 134.034375;
+      const c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+      const xn = Math.pow(Math.max(0, x), n);
+      return Math.pow((c1 + c2 * xn) / (1 + c3 * xn), p);
+    };
+
+    const Lp = pq(L);
+    const Mp = pq(M);
+    const Sp = pq(S);
+
+    const Iz = 0.5 * (Lp + Mp);
+    const d = -0.56;
+    const d0 = 1.6295499532821e-11;
+
+    return {
+      Jz: (1 + d) * Iz / (1 + d * Iz) - d0,
+      az: 3.524000 * Lp - 4.066708 * Mp + 0.542708 * Sp,
+      bz: 0.199076 * Lp + 1.096799 * Mp - 1.295875 * Sp
+    };
+  }
+
+  jzazbzDistance(jz1, jz2) {
+    const chromaJ1 = Math.sqrt(jz1.az * jz1.az + jz1.bz * jz1.bz);
+    const chromaJ2 = Math.sqrt(jz2.az * jz2.az + jz2.bz * jz2.bz);
+    const avgChroma = (chromaJ1 + chromaJ2) / 2;
+    const lightnessWeight = 1.6 + (0.4 * Math.exp(-avgChroma * 300));
+
+    const dJ = (jz1.Jz - jz2.Jz) * lightnessWeight;
+    const da = jz1.az - jz2.az;
+    const db = jz1.bz - jz2.bz;
+    return Math.sqrt(dJ * dJ + da * da + db * db);
+  }
+
   clamp01(v) {
     return v < 0 ? 0 : v > 1 ? 1 : v;
   }
@@ -164,6 +330,16 @@ class PixelArtConverter {
         emoji._labAccent = this.linearToOklab(linAccent);
       }
 
+      // Precompute CIE L*a*b* for CIEDE2000 metric
+      if (!emoji._cieLab && (this.options.colorMetric === 'ciede2000')) {
+        emoji._cieLab = this.linearToCieLab(emoji._lin);
+      }
+
+      // Precompute Jzazbz for jzazbz metric
+      if (!emoji._jzazbz && (this.options.colorMetric === 'jzazbz')) {
+        emoji._jzazbz = this.linearToJzazbz(emoji._lin);
+      }
+
       // Precompute OKLab for multi-region color profile
       // Supports both full format (colorProfile: [{rgb, weight}]) and compact (cp: [[r,g,b,w%]])
       const profile = emoji.colorProfile || emoji.cp;
@@ -186,6 +362,12 @@ class PixelArtConverter {
       if (typeof emoji.variance !== 'number') {
         emoji.variance = 999;
       }
+
+      // Precompute chroma for per-color tolerance
+      if (!emoji._chroma) {
+        const lab = emoji._lab;
+        emoji._chroma = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+      }
     }
   }
 
@@ -194,7 +376,7 @@ class PixelArtConverter {
     if (this.emojis.length < 1000) {
       return null; // Not worth the overhead for small sets
     }
-    
+
     // Bucket emojis by quantized OKLab coordinates
     const binL = 0.05;  // L range ~0–1, ~20 bins
     const binA = 0.04;  // a range ~-0.4–0.4, ~20 bins
@@ -234,7 +416,7 @@ class PixelArtConverter {
         }
       }
     }
-    
+
     return { colorIndex: index, binL, binA, binB };
   }
 
@@ -243,13 +425,13 @@ class PixelArtConverter {
     if (!this.colorIndex) {
       return this.emojis; // Return all emojis for small sets
     }
-    
+
     const { colorIndex, binL, binA, binB } = this.colorIndex;
     const lab = this.linearToOklab(this.rgb8ToLinear(targetColor));
     const kL = Math.floor(lab.L / binL);
     const kA = Math.floor(lab.a / binA);
     const kB = Math.floor(lab.b / binB);
-    
+
     const seen = new Set();
     const candidates = [];
 
@@ -298,6 +480,17 @@ class PixelArtConverter {
     return PixelArtConverter.EXEMPTED_EMOJI_PATTERNS.some(pattern => lowerName.includes(pattern));
   }
 
+  // Get per-emoji usage cap based on chroma when perColorTolerance is enabled
+  getEmojiMaxUses(emoji) {
+    if (this.options.tolerance >= 100) return Infinity;
+    if (!this.options.perColorTolerance) return this.maxEmojiUses;
+
+    const chroma = emoji._chroma || 0;
+    if (chroma < 0.05) return Infinity; // Neutrals/grays: unlimited
+    if (chroma < 0.15) return this.maxEmojiUses * 2; // Muted colors: 2x normal
+    return this.maxEmojiUses; // Saturated colors: normal limit
+  }
+
   // Find the best matching emoji for a given color.
   // `targetColor` is an sRGB 8-bit color ({r, g, b} in the 0..255 range).
   // Optionally, a precomputed OKLab color ({L, a, b}) can be passed as
@@ -312,10 +505,26 @@ class PixelArtConverter {
     let bestAllowed = null;
     let bestAllowedDist = Infinity;
 
-    const useHK = this.options.colorMetric === 'oklab-hk';
+    const metric = this.options.colorMetric;
+    const useCiede = metric === 'ciede2000';
+    const useJzazbz = metric === 'jzazbz';
+    const useHK = metric === 'oklab-hk';
+
+    // For CIEDE2000: first pass with OKLab to find top candidates, then re-rank
+    let ciede2000Target = null;
+    let jzazbzTarget = null;
+    if (useCiede) {
+      ciede2000Target = this.linearToCieLab(this.rgb8ToLinear(targetColor));
+    } else if (useJzazbz) {
+      jzazbzTarget = this.linearToJzazbz(this.rgb8ToLinear(targetColor));
+    }
+
     const distFn = useHK
       ? (a, b) => this.oklabDistanceCalibrated(a, b)
       : (a, b) => this.oklabDistance(a, b);
+
+    // Collect scored candidates for CIEDE2000 re-ranking
+    const topCandidates = useCiede ? [] : null;
 
     for (const emoji of candidates) {
       if (!emoji || !emoji.color) continue;
@@ -323,8 +532,6 @@ class PixelArtConverter {
       let dist;
       if (emoji._labProfile) {
         // Multi-region profile: blend overall visual impression with best cluster match.
-        // The weighted-average lab represents what the viewer perceives at a distance,
-        // while the closest cluster captures when the target lands on one color.
         let avgL = 0, avgA = 0, avgB = 0, totalW = 0;
         let minClusterDist = Infinity;
         for (const entry of emoji._labProfile) {
@@ -343,6 +550,8 @@ class PixelArtConverter {
         } else {
           dist = minClusterDist;
         }
+      } else if (useJzazbz && emoji._jzazbz) {
+        dist = this.jzazbzDistance(jzazbzTarget, emoji._jzazbz);
       } else {
         // Fallback: single mean + optional accent
         const emojiLab = emoji._lab || this.linearToOklab(this.rgb8ToLinear(emoji.color));
@@ -369,6 +578,12 @@ class PixelArtConverter {
         dist += v * (0.28 * textureWeight);
       }
 
+      // For CIEDE2000: collect top 20 candidates by OKLab, then re-rank
+      if (useCiede) {
+        topCandidates.push({ emoji, dist });
+        continue;
+      }
+
       if (dist < bestDist) {
         bestDist = dist;
         best = emoji;
@@ -380,11 +595,38 @@ class PixelArtConverter {
 
       const isExempted = this.isExemptedEmoji(emoji.name);
       const usageCount = this.usedEmojis.get(emoji.name) || 0;
-      const allowed = isExempted || usageCount < this.maxEmojiUses;
+      const maxUses = this.getEmojiMaxUses(emoji);
+      const allowed = isExempted || usageCount < maxUses;
 
       if (allowed && dist < bestAllowedDist) {
         bestAllowedDist = dist;
         bestAllowed = emoji;
+      }
+    }
+
+    // CIEDE2000 re-ranking: sort by OKLab distance, take top 20, re-rank with CIEDE2000
+    if (useCiede && topCandidates.length > 0) {
+      topCandidates.sort((a, b) => a.dist - b.dist);
+      const rerank = topCandidates.slice(0, 20);
+      for (const entry of rerank) {
+        const cieLab = entry.emoji._cieLab || this.linearToCieLab(entry.emoji._lin || this.rgb8ToLinear(entry.emoji.color));
+        entry.emoji._cieLab = cieLab;
+        entry.dist = this.ciede2000Distance(ciede2000Target, cieLab);
+      }
+      rerank.sort((a, b) => a.dist - b.dist);
+      best = rerank[0].emoji;
+      bestDist = rerank[0].dist;
+      if (this.options.tolerance < 100) {
+        for (const entry of rerank) {
+          const isExempted = this.isExemptedEmoji(entry.emoji.name);
+          const usageCount = this.usedEmojis.get(entry.emoji.name) || 0;
+          const maxUses = this.getEmojiMaxUses(entry.emoji);
+          if (isExempted || usageCount < maxUses) {
+            bestAllowed = entry.emoji;
+            bestAllowedDist = entry.dist;
+            break;
+          }
+        }
       }
     }
 
@@ -407,10 +649,10 @@ class PixelArtConverter {
   async loadImage(source, isUrl = true) {
     return new Promise((resolve, reject) => {
       const img = new Image();
-      
+
       img.onload = () => resolve(img);
       img.onerror = () => reject(new Error('Failed to load image'));
-      
+
       if (isUrl) {
         const parsedUrl = new URL(source);
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
@@ -438,48 +680,48 @@ class PixelArtConverter {
     // This mimics LANCZOS-style quality by progressively halving
     let currentWidth = img.width;
     let currentHeight = img.height;
-    
+
     // Create source canvas with original image
     let sourceCanvas = document.createElement('canvas');
     let sourceCtx = sourceCanvas.getContext('2d');
     sourceCanvas.width = currentWidth;
     sourceCanvas.height = currentHeight;
-    
+
     // Fill with white background first (handles transparency like Python)
     sourceCtx.fillStyle = '#FFFFFF';
     sourceCtx.fillRect(0, 0, currentWidth, currentHeight);
     sourceCtx.drawImage(img, 0, 0);
-    
+
     // Progressive downscaling - halve dimensions until close to target
     while (currentWidth / 2 > targetWidth && currentHeight / 2 > targetHeight) {
       const newWidth = Math.floor(currentWidth / 2);
       const newHeight = Math.floor(currentHeight / 2);
-      
+
       const tempCanvas = document.createElement('canvas');
       const tempCtx = tempCanvas.getContext('2d');
       tempCanvas.width = newWidth;
       tempCanvas.height = newHeight;
-      
+
       tempCtx.imageSmoothingEnabled = true;
       tempCtx.imageSmoothingQuality = 'high';
       tempCtx.drawImage(sourceCanvas, 0, 0, newWidth, newHeight);
-      
+
       sourceCanvas = tempCanvas;
       sourceCtx = tempCtx;
       currentWidth = newWidth;
       currentHeight = newHeight;
     }
-    
+
     // Final resize to exact target dimensions
     const finalCanvas = document.createElement('canvas');
     const finalCtx = finalCanvas.getContext('2d');
     finalCanvas.width = targetWidth;
     finalCanvas.height = targetHeight;
-    
+
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = 'high';
     finalCtx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
-    
+
     return finalCanvas;
   }
 
@@ -768,6 +1010,136 @@ class PixelArtConverter {
     return sharpened;
   }
 
+  // Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+  applyCLAHE(pixels, width, height, clipLimit = 2.0, tileSize = 8) {
+    const numBins = 256;
+    const tilesX = Math.max(1, Math.ceil(width / tileSize));
+    const tilesY = Math.max(1, Math.ceil(height / tileSize));
+
+    // Compute luminance for each pixel
+    const lum = [];
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) {
+        const p = pixels[y][x];
+        row.push(Math.round(0.299 * p.r + 0.587 * p.g + 0.114 * p.b));
+      }
+      lum.push(row);
+    }
+
+    // Compute clipped CDF for each tile
+    const tileCDFs = [];
+    for (let ty = 0; ty < tilesY; ty++) {
+      const tileRow = [];
+      for (let tx = 0; tx < tilesX; tx++) {
+        const yStart = Math.floor(ty * height / tilesY);
+        const yEnd = Math.min(height, Math.floor((ty + 1) * height / tilesY));
+        const xStart = Math.floor(tx * width / tilesX);
+        const xEnd = Math.min(width, Math.floor((tx + 1) * width / tilesX));
+        const tilePixels = (yEnd - yStart) * (xEnd - xStart);
+
+        // Build histogram
+        const hist = new Float64Array(numBins);
+        for (let y = yStart; y < yEnd; y++) {
+          for (let x = xStart; x < xEnd; x++) {
+            hist[lum[y][x]]++;
+          }
+        }
+
+        // Clip histogram and redistribute
+        const limit = Math.max(1, clipLimit * tilePixels / numBins);
+        let excess = 0;
+        for (let i = 0; i < numBins; i++) {
+          if (hist[i] > limit) {
+            excess += hist[i] - limit;
+            hist[i] = limit;
+          }
+        }
+        const redistribute = excess / numBins;
+        for (let i = 0; i < numBins; i++) {
+          hist[i] += redistribute;
+        }
+
+        // Build CDF (maps input luminance to output 0-255)
+        const cdf = new Float64Array(numBins);
+        cdf[0] = hist[0];
+        for (let i = 1; i < numBins; i++) {
+          cdf[i] = cdf[i - 1] + hist[i];
+        }
+        const cdfMin = cdf[0];
+        const cdfRange = Math.max(1, tilePixels - cdfMin);
+        for (let i = 0; i < numBins; i++) {
+          cdf[i] = Math.round(((cdf[i] - cdfMin) / cdfRange) * 255);
+        }
+
+        tileRow.push(cdf);
+      }
+      tileCDFs.push(tileRow);
+    }
+
+    // Interpolate CDFs for each pixel and apply
+    const result = [];
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) {
+        // Find surrounding tile centers
+        const tfy = (y + 0.5) / height * tilesY - 0.5;
+        const tfx = (x + 0.5) / width * tilesX - 0.5;
+        const ty0 = Math.max(0, Math.floor(tfy));
+        const ty1 = Math.min(tilesY - 1, ty0 + 1);
+        const tx0 = Math.max(0, Math.floor(tfx));
+        const tx1 = Math.min(tilesX - 1, tx0 + 1);
+        const fy = tfy - ty0;
+        const fx = tfx - tx0;
+
+        const l = lum[y][x];
+        // Bilinear interpolation of the 4 surrounding tile CDFs
+        const v00 = tileCDFs[ty0][tx0][l];
+        const v10 = tileCDFs[ty0][tx1][l];
+        const v01 = tileCDFs[ty1][tx0][l];
+        const v11 = tileCDFs[ty1][tx1][l];
+        const newLum = (1 - fy) * ((1 - fx) * v00 + fx * v10) + fy * ((1 - fx) * v01 + fx * v11);
+
+        // Apply equalized luminance while preserving color ratios
+        const p = pixels[y][x];
+        const oldLum = Math.max(1, 0.299 * p.r + 0.587 * p.g + 0.114 * p.b);
+        const scale = newLum / oldLum;
+
+        row.push({
+          r: Math.max(0, Math.min(255, Math.round(p.r * scale))),
+          g: Math.max(0, Math.min(255, Math.round(p.g * scale))),
+          b: Math.max(0, Math.min(255, Math.round(p.b * scale))),
+          a: p.a
+        });
+      }
+      result.push(row);
+    }
+    return result;
+  }
+
+  // Apply saturation boost/reduction
+  applySaturationBoost(pixels, width, height, boost) {
+    if (boost === 1.0) return pixels;
+
+    const result = [];
+    for (let y = 0; y < height; y++) {
+      const row = [];
+      for (let x = 0; x < width; x++) {
+        const p = pixels[y][x];
+        // Luminance-preserving saturation adjustment
+        const lum = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+        row.push({
+          r: Math.max(0, Math.min(255, Math.round(lum + (p.r - lum) * boost))),
+          g: Math.max(0, Math.min(255, Math.round(lum + (p.g - lum) * boost))),
+          b: Math.max(0, Math.min(255, Math.round(lum + (p.b - lum) * boost))),
+          a: p.a
+        });
+      }
+      result.push(row);
+    }
+    return result;
+  }
+
   // Extract pixel colors from an image with high-quality resampling
   extractPixelColors(img, width, height) {
     // Prefer gamma-correct supersampled rasterization for best palette matching.
@@ -812,6 +1184,31 @@ class PixelArtConverter {
     const sharpeningStrength = Math.max(0, Math.min(2, (this.options.sharpeningStrength ?? 0) / 100));
     if (sharpeningStrength > 0) {
       pixels = this.applySharpeningFilter(pixels, width, height, sharpeningStrength);
+    }
+
+    // Apply optional CLAHE
+    if (this.options.clahe) {
+      const strength = Math.max(0, Math.min(1, (this.options.claheStrength ?? 40) / 100));
+      const claheResult = this.applyCLAHE(pixels, width, height);
+      // Blend original with CLAHE result
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const orig = pixels[y][x];
+          const eq = claheResult[y][x];
+          pixels[y][x] = {
+            r: Math.round(orig.r + (eq.r - orig.r) * strength),
+            g: Math.round(orig.g + (eq.g - orig.g) * strength),
+            b: Math.round(orig.b + (eq.b - orig.b) * strength),
+            a: orig.a
+          };
+        }
+      }
+    }
+
+    // Apply optional saturation boost
+    const satBoost = (this.options.saturationBoost ?? 100) / 100;
+    if (satBoost !== 1.0) {
+      pixels = this.applySaturationBoost(pixels, width, height, satBoost);
     }
 
     return pixels;
@@ -885,6 +1282,121 @@ class PixelArtConverter {
     return result;
   }
 
+  // Classify regions as photo-like or graphic-like for hybrid dithering
+  computeRegionType(localVariance, w, h) {
+    const isPhoto = Array.from({ length: h }, () => Array(w).fill(true));
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        // Graphic regions: low variance (flat color areas)
+        isPhoto[y][x] = localVariance[y][x].variance > 0.06;
+      }
+    }
+    return isPhoto;
+  }
+
+  // Apply spatial coherence: prefer neighboring emojis when close in color distance
+  applySpatialCoherence(grid, pixels, w, h) {
+    const strength = Math.max(0, Math.min(1, (this.options.coherenceStrength ?? 50) / 100));
+    if (strength <= 0) return grid;
+
+    const newGrid = grid.map(row => [...row]);
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const current = grid[y][x];
+        if (!current || !current.color) continue;
+
+        const targetLab = this.linearToOklab(this.rgb8ToLinear(pixels[y][x]));
+        const currentLab = current._lab || this.linearToOklab(this.rgb8ToLinear(current.color));
+        const currentDist = this.oklabDistance(targetLab, currentLab);
+
+        // Check if any neighbor emoji is close enough to be preferred
+        let bestNeighbor = null;
+        let bestNeighborDist = Infinity;
+
+        for (const [dy, dx] of directions) {
+          const ny = y + dy, nx = x + dx;
+          if (ny < 0 || ny >= h || nx < 0 || nx >= w) continue;
+          const neighbor = grid[ny][nx];
+          if (!neighbor || !neighbor.color || neighbor === current) continue;
+
+          const neighborLab = neighbor._lab || this.linearToOklab(this.rgb8ToLinear(neighbor.color));
+          const dist = this.oklabDistance(targetLab, neighborLab);
+          if (dist < bestNeighborDist) {
+            bestNeighborDist = dist;
+            bestNeighbor = neighbor;
+          }
+        }
+
+        // Replace current with neighbor if it's within threshold
+        if (bestNeighbor && bestNeighborDist < currentDist * (1 + 0.15 * strength)) {
+          newGrid[y][x] = bestNeighbor;
+        }
+      }
+    }
+
+    return newGrid;
+  }
+
+  // Apply median filter to remove isolated outlier emojis
+  applyMedianFilter(grid, pixels, w, h) {
+    const newGrid = grid.map(row => [...row]);
+    const directions = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const current = grid[y][x];
+        if (!current || !current.color) continue;
+
+        const neighbors = [];
+        for (const [dy, dx] of directions) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w && grid[ny][nx]) {
+            neighbors.push(grid[ny][nx]);
+          }
+        }
+        if (neighbors.length < 3) continue;
+
+        // Compute average distance between neighbors
+        const targetLab = this.linearToOklab(this.rgb8ToLinear(pixels[y][x]));
+        const currentLab = current._lab || this.linearToOklab(this.rgb8ToLinear(current.color));
+        const currentDist = this.oklabDistance(targetLab, currentLab);
+
+        let neighborDistSum = 0;
+        for (const n of neighbors) {
+          const nLab = n._lab || this.linearToOklab(this.rgb8ToLinear(n.color));
+          neighborDistSum += this.oklabDistance(targetLab, nLab);
+        }
+        const avgNeighborDist = neighborDistSum / neighbors.length;
+
+        // If current is an outlier (> 2x average neighbor distance), replace with most common neighbor
+        if (currentDist > avgNeighborDist * 2 && avgNeighborDist > 0) {
+          // Find most common neighbor emoji
+          const counts = new Map();
+          for (const n of neighbors) {
+            counts.set(n.name, (counts.get(n.name) || 0) + 1);
+          }
+          let bestName = null, bestCount = 0;
+          for (const [name, count] of counts) {
+            if (count > bestCount) { bestCount = count; bestName = name; }
+          }
+          // Only replace if the replacement is within 20% of target pixel color
+          const replacement = neighbors.find(n => n.name === bestName);
+          if (replacement) {
+            const repLab = replacement._lab || this.linearToOklab(this.rgb8ToLinear(replacement.color));
+            const repDist = this.oklabDistance(targetLab, repLab);
+            if (repDist < currentDist * 1.2) {
+              newGrid[y][x] = replacement;
+            }
+          }
+        }
+      }
+    }
+
+    return newGrid;
+  }
+
   // Adjust dimensions to fit within character budget
   adjustDimensionsForBudget(width, height) {
     if (this.options.charBudget === 0) {
@@ -915,24 +1427,24 @@ class PixelArtConverter {
     // Load the image
     if (onProgress) onProgress(10, 'Loading image...');
     const img = await this.loadImage(imageSource, isUrl);
-    
+
     // Adjust dimensions for character budget
     if (onProgress) onProgress(20, 'Calculating dimensions...');
     const dimensions = this.adjustDimensionsForBudget(
       this.options.width,
       this.options.height
     );
-    
+
     // Extract pixel colors with high-quality resampling
     if (onProgress) onProgress(30, 'Processing image...');
     const pixels = this.extractPixelColors(img, dimensions.width, dimensions.height);
-    
+
     // Reset usage tracking
     this.usedEmojis.clear();
-    
+
     // Build the pixel art grid
     if (onProgress) onProgress(40, 'Matching emojis...');
-    const grid = [];
+    let grid = [];
     const totalPixels = dimensions.width * dimensions.height;
     let processedPixels = 0;
 
@@ -947,6 +1459,8 @@ class PixelArtConverter {
     const useDithering = Boolean(this.options.dithering);
     const baseDitherStrength = Math.max(0, Math.min(1, (this.options.ditheringStrength ?? 85) / 100));
     const adaptiveDithering = this.options.adaptiveDithering ?? true;
+    const useHybridDithering = this.options.hybridDithering && useDithering;
+    const useErrorClamping = this.options.errorClamping ?? true;
     const w = dimensions.width;
     const h = dimensions.height;
     const error = useDithering
@@ -954,10 +1468,15 @@ class PixelArtConverter {
       : null;
 
     // Precompute local variance for adaptive dithering
-    const localVariance = useDithering && adaptiveDithering
+    const localVariance = useDithering && (adaptiveDithering || useHybridDithering)
       ? this.computeLocalVariance(pixels, w, h)
       : null;
-    
+
+    // Precompute region types for hybrid dithering
+    const regionType = useHybridDithering && localVariance
+      ? this.computeRegionType(localVariance, w, h)
+      : null;
+
     for (let y = 0; y < h; y++) {
       const row = [];
       const serpentine = useDithering && (y % 2 === 1);
@@ -970,66 +1489,90 @@ class PixelArtConverter {
 
         let emoji;
         if (useDithering) {
-          // Work in linear RGB for proper error diffusion.
-          const baseLin = this.rgb8ToLinear(pixel);
-          const e = error[y][x];
-          const targetLin = this.clampLinear({
-            r: baseLin.r + e.r,
-            g: baseLin.g + e.g,
-            b: baseLin.b + e.b
-          });
+          // Check if this pixel should use ordered (Bayer) dithering instead of F-S
+          const useOrdered = useHybridDithering && regionType && !regionType[y][x];
 
-          emoji = this.findBestEmojiFromLinear(targetLin);
+          if (useOrdered) {
+            // Ordered dithering for graphic/flat regions
+            const threshold = PixelArtConverter.BAYER_8X8[y % 8][x % 8] - 0.5;
+            const scale = baseDitherStrength * 0.3;
+            const baseLin = this.rgb8ToLinear(pixel);
+            const targetLin = this.clampLinear({
+              r: baseLin.r + threshold * scale,
+              g: baseLin.g + threshold * scale,
+              b: baseLin.b + threshold * scale
+            });
+            emoji = this.findBestEmojiFromLinear(targetLin);
+          } else {
+            // Floyd-Steinberg error diffusion for photo-like regions
+            const baseLin = this.rgb8ToLinear(pixel);
+            const e = error[y][x];
+            const targetLin = this.clampLinear({
+              r: baseLin.r + e.r,
+              g: baseLin.g + e.g,
+              b: baseLin.b + e.b
+            });
 
-          const chosenLin = emoji?._lin || (emoji?.color ? this.rgb8ToLinear(emoji.color) : null);
-          if (emoji && chosenLin) {
-            // Adaptive dithering: sigmoid attenuation for edges, boost for smooth gradients
-            let ditherStrength = baseDitherStrength;
-            if (localVariance) {
-              const { variance, gradient } = localVariance[y][x];
-              // Sigmoid attenuation: sharp rolloff near threshold preserves detail
-              const k = 10;
-              const threshold = 0.15;
-              ditherStrength *= 1.0 / (1.0 + Math.exp(k * (variance - threshold)));
-              // Boost dither on smooth ramps (high gradient, low variance) by up to 20%
-              if (gradient > 0.05 && variance < threshold) {
-                ditherStrength *= 1.0 + 0.2 * (gradient / 0.5);
+            emoji = this.findBestEmojiFromLinear(targetLin);
+
+            const chosenLin = emoji?._lin || (emoji?.color ? this.rgb8ToLinear(emoji.color) : null);
+            if (emoji && chosenLin) {
+              // Adaptive dithering: sigmoid attenuation for edges, boost for smooth gradients
+              let ditherStrength = baseDitherStrength;
+              if (localVariance) {
+                const { variance, gradient } = localVariance[y][x];
+                // Sigmoid attenuation: sharp rolloff near threshold preserves detail
+                const k = 10;
+                const threshold = 0.15;
+                ditherStrength *= 1.0 / (1.0 + Math.exp(k * (variance - threshold)));
+                // Boost dither on smooth ramps (high gradient, low variance) by up to 20%
+                if (gradient > 0.05 && variance < threshold) {
+                  ditherStrength *= 1.0 + 0.2 * (gradient / 0.5);
+                }
               }
-            }
 
-            const err = {
-              r: (targetLin.r - chosenLin.r) * ditherStrength,
-              g: (targetLin.g - chosenLin.g) * ditherStrength,
-              b: (targetLin.b - chosenLin.b) * ditherStrength
-            };
+              const err = {
+                r: (targetLin.r - chosenLin.r) * ditherStrength,
+                g: (targetLin.g - chosenLin.g) * ditherStrength,
+                b: (targetLin.b - chosenLin.b) * ditherStrength
+              };
 
-            // Diffuse error to neighbors (Floyd–Steinberg)
-            const right = serpentine ? -1 : 1;
-            const left = serpentine ? 1 : -1;
+              // Clamp error to prevent overcorrection in high-contrast regions
+              if (useErrorClamping) {
+                const maxErr = 0.1;
+                err.r = Math.max(-maxErr, Math.min(maxErr, err.r));
+                err.g = Math.max(-maxErr, Math.min(maxErr, err.g));
+                err.b = Math.max(-maxErr, Math.min(maxErr, err.b));
+              }
 
-            // Right
-            if (x + right >= 0 && x + right < w) {
-              error[y][x + right].r += err.r * (7 / 16);
-              error[y][x + right].g += err.g * (7 / 16);
-              error[y][x + right].b += err.b * (7 / 16);
-            }
-            // Bottom-left
-            if (y + 1 < h && x + left >= 0 && x + left < w) {
-              error[y + 1][x + left].r += err.r * (3 / 16);
-              error[y + 1][x + left].g += err.g * (3 / 16);
-              error[y + 1][x + left].b += err.b * (3 / 16);
-            }
-            // Bottom
-            if (y + 1 < h) {
-              error[y + 1][x].r += err.r * (5 / 16);
-              error[y + 1][x].g += err.g * (5 / 16);
-              error[y + 1][x].b += err.b * (5 / 16);
-            }
-            // Bottom-right
-            if (y + 1 < h && x + right >= 0 && x + right < w) {
-              error[y + 1][x + right].r += err.r * (1 / 16);
-              error[y + 1][x + right].g += err.g * (1 / 16);
-              error[y + 1][x + right].b += err.b * (1 / 16);
+              // Diffuse error to neighbors (Floyd–Steinberg)
+              const right = serpentine ? -1 : 1;
+              const left = serpentine ? 1 : -1;
+
+              // Right
+              if (x + right >= 0 && x + right < w) {
+                error[y][x + right].r += err.r * (7 / 16);
+                error[y][x + right].g += err.g * (7 / 16);
+                error[y][x + right].b += err.b * (7 / 16);
+              }
+              // Bottom-left
+              if (y + 1 < h && x + left >= 0 && x + left < w) {
+                error[y + 1][x + left].r += err.r * (3 / 16);
+                error[y + 1][x + left].g += err.g * (3 / 16);
+                error[y + 1][x + left].b += err.b * (3 / 16);
+              }
+              // Bottom
+              if (y + 1 < h) {
+                error[y + 1][x].r += err.r * (5 / 16);
+                error[y + 1][x].g += err.g * (5 / 16);
+                error[y + 1][x].b += err.b * (5 / 16);
+              }
+              // Bottom-right
+              if (y + 1 < h && x + right >= 0 && x + right < w) {
+                error[y + 1][x + right].r += err.r * (1 / 16);
+                error[y + 1][x + right].g += err.g * (1 / 16);
+                error[y + 1][x + right].b += err.b * (1 / 16);
+              }
             }
           }
         } else {
@@ -1042,22 +1585,35 @@ class PixelArtConverter {
         } else {
           row.push(emoji);
         }
-        
+
         processedPixels++;
         if (onProgress && processedPixels % 10 === 0) {
-          const progress = 40 + Math.floor((processedPixels / totalPixels) * 50);
+          const progress = 40 + Math.floor((processedPixels / totalPixels) * 40);
           onProgress(progress, `Matching emojis... ${processedPixels}/${totalPixels}`);
         }
       }
       grid.push(row);
     }
-    
+
+    // Post-processing passes
+    if (onProgress) onProgress(82, 'Post-processing...');
+
+    // Apply spatial coherence
+    if (this.options.spatialCoherence) {
+      grid = this.applySpatialCoherence(grid, pixels, w, h);
+    }
+
+    // Apply median filter
+    if (this.options.medianFilter) {
+      grid = this.applyMedianFilter(grid, pixels, w, h);
+    }
+
     // Generate text output
     if (onProgress) onProgress(90, 'Generating output...');
     const output = this.generateTextOutput(grid);
-    
+
     if (onProgress) onProgress(100, 'Complete!');
-    
+
     return {
       grid,
       output,
@@ -1069,14 +1625,14 @@ class PixelArtConverter {
   // Generate text output for Slack
   generateTextOutput(grid) {
     const lines = [];
-    
+
     for (const row of grid) {
       const line = row
         .map(emoji => emoji ? `:${emoji.name}:` : `:${PixelArtConverter.FALLBACK_EMOJI}:`)
         .join('');
       lines.push(line);
     }
-    
+
     return lines.join('\n');
   }
 
@@ -1085,7 +1641,7 @@ class PixelArtConverter {
     const emojiCount = new Map();
     let totalEmojis = 0;
     let nullCount = 0;
-    
+
     for (const row of grid) {
       for (const emoji of row) {
         if (emoji) {
@@ -1097,7 +1653,7 @@ class PixelArtConverter {
         }
       }
     }
-    
+
     return {
       totalEmojis,
       uniqueEmojis: emojiCount.size,
@@ -1118,7 +1674,7 @@ class PixelArtConverter {
   calculateCharacterCount(grid) {
     let count = 0;
     const fallbackLength = `:${PixelArtConverter.FALLBACK_EMOJI}:`.length;
-    
+
     for (const row of grid) {
       for (const emoji of row) {
         if (emoji) {

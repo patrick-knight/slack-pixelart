@@ -240,6 +240,71 @@
           </div>
           <small>Enhances edges and fine details (0 = off, 50-70 recommended)</small>
         </div>
+
+        <div class="input-group">
+          <label for="colorMetric">
+            Color Metric
+          </label>
+          <select id="colorMetric">
+            <option value="oklab">OKLab (default)</option>
+            <option value="oklab-hk">OKLab + Helmholtz-Kohlrausch</option>
+            <option value="ciede2000">CIEDE2000 (most accurate, slower)</option>
+            <option value="jzazbz">Jzazbz (better blue/red)</option>
+          </select>
+          <small>Color matching algorithm. CIEDE2000 is industry standard but slower</small>
+        </div>
+
+        <div class="input-group">
+          <label for="saturationBoost">
+            Saturation Boost
+            <span class="label-hint">(0-200)</span>
+          </label>
+          <input type="range" id="saturationBoostRange" min="50" max="200" value="100" aria-label="Saturation boost">
+          <div class="range-value">
+            <input type="number" id="saturationBoost" value="100" min="50" max="200">
+          </div>
+          <small>100 = no change, higher = more vibrant (emojis tend to be more saturated)</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="clahe">
+            <span>CLAHE (Adaptive Contrast Enhancement)</span>
+          </label>
+          <small>Brings out details in dark/bright regions of photos</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="spatialCoherence">
+            <span>Spatial Coherence (reduce noise)</span>
+          </label>
+          <small>Prefers neighboring emojis when close in color, reduces salt-and-pepper patterns</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="hybridDithering">
+            <span>Hybrid Dithering (ordered + F-S)</span>
+          </label>
+          <small>Uses ordered dithering for flat regions, Floyd-Steinberg for photos</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="perColorTolerance">
+            <span>Per-Color Tolerance</span>
+          </label>
+          <small>Allows unlimited reuse of neutral/gray emojis while limiting saturated ones</small>
+        </div>
+
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="medianFilter">
+            <span>Median Filter (remove outliers)</span>
+          </label>
+          <small>Post-processing pass to smooth isolated outlier emojis</small>
+        </div>
       </div>
       </details>
     </div>
