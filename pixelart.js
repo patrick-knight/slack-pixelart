@@ -719,7 +719,7 @@ class PixelArtConverter {
 
     // Create source canvas with original image
     let sourceCanvas = document.createElement('canvas');
-    let sourceCtx = sourceCanvas.getContext('2d');
+    const sourceCtx = sourceCanvas.getContext('2d');
     sourceCanvas.width = currentWidth;
     sourceCanvas.height = currentHeight;
 
@@ -743,7 +743,6 @@ class PixelArtConverter {
       tempCtx.drawImage(sourceCanvas, 0, 0, newWidth, newHeight);
 
       sourceCanvas = tempCanvas;
-      sourceCtx = tempCtx;
       currentWidth = newWidth;
       currentHeight = newHeight;
     }
